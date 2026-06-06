@@ -1,1 +1,1 @@
-# EDT-Pages.github.io
+# GLWLG EDT Pages
