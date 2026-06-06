@@ -17435,10 +17435,6 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@et.651971564.xyz:443?security=tls&t
             pickGroup('jp', BESTIP_JP_QUOTA);
             const europeAdded = pickGroup('europe', BESTIP_EU_QUOTA);
             if (europeAdded < BESTIP_EU_QUOTA) pickGroup('jp', BESTIP_EU_QUOTA - europeAdded);
-            for (const record of ranked) {
-                if (selected.length >= limit) break;
-                addRecord(record);
-            }
             return selected;
         }
 
