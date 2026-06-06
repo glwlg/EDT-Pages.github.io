@@ -8601,7 +8601,7 @@
                             <button type="button" class="btn btn-primary" data-bestip-action="test">OpenClash实测</button>
                         </div>
                         <div class="bestip-status" id="bestipStatus">等待加载场景榜</div>
-                        <div class="bestip-hint">候选订阅只用于把节点导入 OpenClash 做实测，规则默认直连，不作为日常代理配置；实测保存后日常订阅继续使用普通订阅链接。</div>
+                        <div class="bestip-hint">候选订阅只用于把节点导入 OpenClash 做实测，规则默认直连，不作为日常代理配置；连通性预筛会剪到前 20 个，实测/自动优选会补下载测速后保存前 20 个。</div>
                     </div>
 
                     <div id="randomIPSection" class="form-group">
@@ -14498,10 +14498,15 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@et.651971564.xyz:443?security=tls&t
         let proxyFeatureAvailabilityInitialized = false;
         const PROXY_PROTOCOLS = ['socks5', 'http', 'https', 'turn', 'sstp'];
         const BESTIP_PROFILES = {
-            'cmcc-js-home': { label: '江苏移动家宽', shortLabel: '江苏移动', asOrg: 'cmcc' },
-            'cu-mobile': { label: '联通手机', shortLabel: '联通手机', asOrg: 'cu' },
-            'cf-fallback': { label: '兜底', shortLabel: '兜底', asOrg: 'cf' }
+            'cmcc-js-home': { label: '江苏移动家宽', shortLabel: '江苏移动', asOrg: 'cmcc', country: 'CN', flag: '🇨🇳' },
+            'cu-mobile': { label: '联通手机', shortLabel: '联通手机', asOrg: 'cu', country: 'CN', flag: '🇨🇳' },
+            'cf-fallback': { label: '兜底', shortLabel: '兜底', asOrg: 'cf', country: '', flag: '🌐' }
         };
+        const BESTIP_TARGET_COUNT = 20;
+        const BESTIP_DELAY_BUCKET_MS = 150;
+        const BESTIP_SPEED_TEST_BYTES = 8_000_000;
+        const BESTIP_SPEED_TEST_TIMEOUT_MS = 10000;
+        const BESTIP_SPEED_TEST_CONCURRENCY = 3;
         const BESTIP_CONTROLLER_STORAGE_KEY = 'glwlgBestIpController';
         const BESTIP_CANDIDATE_BATCH_STORAGE_KEY = 'glwlgBestIpCandidateBatch';
         let bestipCurrentRecords = [];
@@ -16348,6 +16353,57 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@et.651971564.xyz:443?security=tls&t
             if (el) el.innerHTML = html;
         }
 
+        function bestIpCountryToFlag(country) {
+            const code = String(country || '').trim().toUpperCase();
+            if (!/^[A-Z]{2}$/.test(code)) return '';
+            return [...code].map(char => String.fromCodePoint(0x1F1E6 + char.charCodeAt(0) - 65)).join('');
+        }
+
+        function bestIpFlagToCountry(flag) {
+            const chars = [...String(flag || '').trim()];
+            if (chars.length < 2) return '';
+            const code = chars.slice(0, 2).map(char => {
+                const value = char.codePointAt(0) - 0x1F1E6;
+                return value >= 0 && value <= 25 ? String.fromCharCode(65 + value) : '';
+            }).join('');
+            return /^[A-Z]{2}$/.test(code) ? code : '';
+        }
+
+        function getBestIpRemarkFlag(remark) {
+            const match = String(remark || '').match(/^([\u{1F1E6}-\u{1F1FF}]{2})\s*/u);
+            return match ? match[1] : '';
+        }
+
+        function stripBestIpRemarkFlag(remark) {
+            return String(remark || '').replace(/^[\u{1F1E6}-\u{1F1FF}]{2}\s*/u, '').trim();
+        }
+
+        function getBestIpRecordCountry(record, profile = getSelectedBestIpProfile()) {
+            const scene = BESTIP_PROFILES[profile] || BESTIP_PROFILES['cf-fallback'];
+            const explicit = String(record?.country || record?.countryCode || record?.cc || '').trim().toUpperCase();
+            if (/^[A-Z]{2}$/.test(explicit)) return explicit;
+            const flagCountry = bestIpFlagToCountry(record?.flag || getBestIpRemarkFlag(record?.remark));
+            return flagCountry || scene.country || '';
+        }
+
+        function getBestIpRecordFlag(record, profile = getSelectedBestIpProfile()) {
+            const scene = BESTIP_PROFILES[profile] || BESTIP_PROFILES['cf-fallback'];
+            return String(record?.flag || '').trim() ||
+                bestIpCountryToFlag(getBestIpRecordCountry(record, profile)) ||
+                scene.flag ||
+                '🌐';
+        }
+
+        function buildBestIpRecordRemark(record, profile = getSelectedBestIpProfile()) {
+            const scene = BESTIP_PROFILES[profile] || BESTIP_PROFILES['cf-fallback'];
+            const flag = getBestIpRecordFlag(record, profile);
+            const rawRemark = stripBestIpRemarkFlag(record?.remark || scene.shortLabel || scene.label || 'GLWLG');
+            const sceneRemark = rawRemark.includes(scene.shortLabel) || rawRemark.includes(scene.label)
+                ? rawRemark
+                : `${scene.shortLabel || scene.label} ${rawRemark}`.trim();
+            return `${flag} ${sceneRemark}`.trim();
+        }
+
         function getBestIpCandidateBatch() {
             let batch = localStorage.getItem(BESTIP_CANDIDATE_BATCH_STORAGE_KEY);
             if (!batch) {
@@ -16565,7 +16621,9 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@et.651971564.xyz:443?security=tls&t
                 }
             }
             if (!address || !Number.isInteger(port) || port < 1 || port > 65535) return null;
-            return { address: normalizeBestIpAddress(address), port, remark, source: 'manual' };
+            const flag = getBestIpRemarkFlag(remark);
+            const country = bestIpFlagToCountry(flag);
+            return { address: normalizeBestIpAddress(address), port, remark, country, flag, source: 'manual' };
         }
 
         function bestIpRecordToLine(record) {
@@ -16577,7 +16635,7 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@et.651971564.xyz:443?security=tls&t
             if (Number.isFinite(Number(record.browserLatencyMs))) metrics.push(`网页 ${Math.round(Number(record.browserLatencyMs))}ms`);
             if (Number.isFinite(Number(record.browserMbps))) metrics.push(`${Number(record.browserMbps).toFixed(2)}Mbps`);
             if (record.colo) metrics.push(record.colo);
-            const remark = String(record.remark || BESTIP_PROFILES[getSelectedBestIpProfile()].shortLabel || 'GLWLG').trim();
+            const remark = buildBestIpRecordRemark(record);
             return `${displayAddress}#${remark}${metrics.length ? '[' + metrics.join(' ') + ']' : ''}`;
         }
 
@@ -16936,6 +16994,113 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@et.651971564.xyz:443?security=tls&t
             return null;
         }
 
+        function bestIpAddressToSpeedLabel(address) {
+            const clean = normalizeBestIpAddress(address);
+            if (!clean) return '';
+            if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(clean)) {
+                return clean.split('.')
+                    .map(part => Number(part).toString(16).padStart(2, '0'))
+                    .join('')
+                    .toUpperCase();
+            }
+            if (clean.includes(':')) return clean.toLowerCase().replace(/:/g, '-');
+            return '';
+        }
+
+        function buildBestIpDownloadProbeUrl(record) {
+            const label = bestIpAddressToSpeedLabel(record?.address);
+            const port = Number(record?.port) || 443;
+            if (!label || port < 1 || port > 65535) return '';
+            const search = new URLSearchParams({
+                _t: String(Date.now()),
+                bytes: String(BESTIP_SPEED_TEST_BYTES)
+            });
+            return `https://${label}.nip.cmliussss.hidns.vip:${port}/__down?${search.toString()}`;
+        }
+
+        async function measureBestIpDownloadSpeed(record, timeoutMs = BESTIP_SPEED_TEST_TIMEOUT_MS) {
+            const url = buildBestIpDownloadProbeUrl(record);
+            if (!url) throw new Error('仅支持 IP 候选测速');
+            const controller = new AbortController();
+            const started = performance.now();
+            let totalBytes = 0;
+            let timedOut = false;
+            const timer = window.setTimeout(() => {
+                timedOut = true;
+                controller.abort();
+            }, timeoutMs);
+            const finish = () => {
+                const elapsed = Math.max(1, performance.now() - started);
+                return totalBytes > 0 ? (totalBytes * 8) / (elapsed / 1000) / 1000000 : 0;
+            };
+            try {
+                const response = await fetch(url, {
+                    method: 'GET',
+                    cache: 'no-store',
+                    signal: controller.signal
+                });
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                if (!response.body || !response.body.getReader) {
+                    const buffer = await response.arrayBuffer();
+                    totalBytes = buffer.byteLength;
+                    return finish();
+                }
+                const reader = response.body.getReader();
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    totalBytes += value?.byteLength || value?.length || 0;
+                }
+                return finish();
+            } catch (error) {
+                if (timedOut && totalBytes > 0) return finish();
+                throw error;
+            } finally {
+                window.clearTimeout(timer);
+            }
+        }
+
+        async function measureBestIpDownloadSpeeds(records, { quiet = false, label = '下载测速' } = {}) {
+            const targets = rankOpenClashRecords(records)
+                .filter(record => record.source !== 'origin')
+                .slice(0, Math.max(BESTIP_TARGET_COUNT, Math.min(40, records.length)));
+            if (!targets.length) return [];
+            const byKey = new Map(records.map(record => [bestIpRecordKey(record), { ...record }]));
+            let completed = 0;
+            let cursor = 0;
+            const concurrency = Math.min(BESTIP_SPEED_TEST_CONCURRENCY, targets.length);
+            const runOne = async (record) => {
+                const key = bestIpRecordKey(record);
+                const current = byKey.get(key) || { ...record };
+                if (Number.isFinite(Number(current.browserMbps)) && Number(current.browserMbps) > 0) {
+                    completed += 1;
+                    return;
+                }
+                try {
+                    const speed = await measureBestIpDownloadSpeed(current);
+                    current.browserMbps = Number(speed.toFixed(2));
+                    current.speedTestedAt = new Date().toISOString();
+                    current.country = getBestIpRecordCountry(current);
+                    current.flag = getBestIpRecordFlag(current);
+                    delete current.speedError;
+                } catch (error) {
+                    current.browserMbps = null;
+                    current.speedError = error.message;
+                }
+                byKey.set(key, current);
+                completed += 1;
+                if (!quiet) updateBestIpStatus(`${label} ${completed} / ${targets.length}：${current.address}:${current.port || 443}`);
+            };
+            const workers = Array.from({ length: concurrency }, async () => {
+                while (cursor < targets.length) {
+                    const record = targets[cursor++];
+                    await runOne(record);
+                }
+            });
+            await Promise.all(workers);
+            return [...byKey.values()];
+        }
+
         async function refreshProviderWithCurrentCandidates(providerName, records) {
             await saveBestIpCandidatePool(records);
             if (providerName) {
@@ -17025,12 +17190,13 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@et.651971564.xyz:443?security=tls&t
                     }
                 });
                 await Promise.all(workers);
-                const successRecords = updated.filter(record => Number.isFinite(Number(record.clashDelayMs)) && !record.failed && Number(record.clashDelayMs) > 0 && Number(record.clashDelayMs) <= 3000);
+                let successRecords = updated.filter(record => Number.isFinite(Number(record.clashDelayMs)) && !record.failed && Number(record.clashDelayMs) > 0 && Number(record.clashDelayMs) <= 3000);
+                const rawSuccessCount = successRecords.length;
                 const failedRecords = updated.filter(record => !successRecords.some(success => bestIpRecordKey(success) === bestIpRecordKey(record)));
                 const originRecords = updated.filter(record => record.source === 'origin');
                 const originSuccess = originRecords.some(record => Number.isFinite(Number(record.clashDelayMs)) && !record.failed && Number(record.clashDelayMs) > 0 && Number(record.clashDelayMs) <= 3000);
                 const testedCount = testItems.length;
-                const failedCount = testedCount - successRecords.length;
+                const failedCount = testedCount - rawSuccessCount;
                 if (!successRecords.length) {
                     const firstError = updated.find(record => record.error)?.error || '无可用 delay';
                     const message = originRecords.length
@@ -17044,6 +17210,15 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@et.651971564.xyz:443?security=tls&t
                         showToast('本批没有可保存的可用节点', 'warning');
                     }
                     return { successRecords, failedRecords, testedCount, failedCount, providerName, originSuccess, error: message };
+                }
+                if (save) {
+                    if (!quiet) updateBestIpStatus(`OpenClash 延迟实测完成，正在对 ${successRecords.length} 个可用节点做下载测速...`);
+                    successRecords = rankOpenClashRecords(await measureBestIpDownloadSpeeds(successRecords, {
+                        quiet,
+                        label: '下载测速'
+                    })).slice(0, BESTIP_TARGET_COUNT);
+                } else {
+                    successRecords = rankOpenClashRecords(successRecords).slice(0, BESTIP_TARGET_COUNT);
                 }
                 if (pruneProvider) {
                     await refreshProviderWithCurrentCandidates(providerName, successRecords);
@@ -17059,7 +17234,7 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@et.651971564.xyz:443?security=tls&t
                     const nextAction = originSuccess && successRecords.length === 1
                         ? '只有基准域名可用，继续生成下一批候选或换端口策略。'
                         : '已把可通候选筛到文本框，确认后点“保存场景榜”。';
-                    updateBestIpStatus(`<strong>${sceneLabel}</strong>：预筛 ${testedCount} 个，成功 ${successRecords.length} 个，失败 ${failedCount} 个。${nextAction}`);
+                    updateBestIpStatus(`<strong>${sceneLabel}</strong>：预筛 ${testedCount} 个，成功 ${rawSuccessCount} 个，已保留前 ${successRecords.length} 个，失败 ${failedCount} 个。${nextAction}`);
                     showToast('✅ 连通性预筛完成', 'success');
                     return { successRecords, failedRecords, testedCount, failedCount, providerName, originSuccess };
                 }
@@ -17069,7 +17244,7 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@et.651971564.xyz:443?security=tls&t
                 const nextAction = originSuccess && successRecords.length === 1
                     ? '当前只有基准域名可用，说明 ET 配置本身可连但候选 IP 不行；继续生成下一批候选池再测。'
                     : '已把可用节点写入正式场景榜，日常订阅会优先使用这些节点。';
-                updateBestIpStatus(`<strong>${sceneLabel}</strong>：实测 ${testedCount} 个，成功 ${successRecords.length} 个，失败 ${failedCount} 个。${nextAction}`);
+                updateBestIpStatus(`<strong>${sceneLabel}</strong>：实测 ${testedCount} 个，成功 ${rawSuccessCount} 个，已按速度/延迟保留 ${successRecords.length} 个，失败 ${failedCount} 个。${nextAction}`);
                 showToast('✅ OpenClash 实测结果已合并保存', 'success');
                 return { successRecords, failedRecords, testedCount, failedCount, providerName, originSuccess };
             } catch (error) {
@@ -17094,24 +17269,35 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@et.651971564.xyz:443?security=tls&t
                 const key = bestIpRecordKey(record);
                 if (!key || record.source === 'origin') continue;
                 const old = dedup.get(key);
-                if (!old || Number(record.clashDelayMs || 999999) < Number(old.clashDelayMs || 999999)) {
+                if (!old || compareBestIpRank(record, old) < 0) {
                     dedup.set(key, record);
                 }
             }
-            return [...dedup.values()].sort((a, b) => {
-                const delayA = Number.isFinite(Number(a.clashDelayMs)) ? Number(a.clashDelayMs) : 999999;
-                const delayB = Number.isFinite(Number(b.clashDelayMs)) ? Number(b.clashDelayMs) : 999999;
-                if (delayA !== delayB) return delayA - delayB;
-                const speedA = Number.isFinite(Number(a.browserMbps)) ? Number(a.browserMbps) : -1;
-                const speedB = Number.isFinite(Number(b.browserMbps)) ? Number(b.browserMbps) : -1;
-                return speedB - speedA;
-            });
+            return [...dedup.values()].sort(compareBestIpRank);
+        }
+
+        function compareBestIpRank(a, b) {
+            const delayA = Number.isFinite(Number(a.clashDelayMs)) ? Number(a.clashDelayMs) : 999999;
+            const delayB = Number.isFinite(Number(b.clashDelayMs)) ? Number(b.clashDelayMs) : 999999;
+            const hasDelayA = delayA < 999999;
+            const hasDelayB = delayB < 999999;
+            if (hasDelayA !== hasDelayB) return hasDelayA ? -1 : 1;
+            if (hasDelayA && hasDelayB) {
+                const bucketA = Math.floor(delayA / BESTIP_DELAY_BUCKET_MS);
+                const bucketB = Math.floor(delayB / BESTIP_DELAY_BUCKET_MS);
+                if (bucketA !== bucketB) return bucketA - bucketB;
+            }
+            const speedA = Number.isFinite(Number(a.browserMbps)) ? Number(a.browserMbps) : -1;
+            const speedB = Number.isFinite(Number(b.browserMbps)) ? Number(b.browserMbps) : -1;
+            if (speedA !== speedB) return speedB - speedA;
+            if (delayA !== delayB) return delayA - delayB;
+            return bestIpRecordKey(a).localeCompare(bestIpRecordKey(b));
         }
 
         async function autoSelectBestIps() {
             const profile = getSelectedBestIpProfile();
             const sceneLabel = BESTIP_PROFILES[profile].label;
-            const targetCount = 24;
+            const targetCount = BESTIP_TARGET_COUNT;
             const maxRounds = 6;
             const collected = [];
             let lastError = '';
@@ -17126,6 +17312,16 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@et.651971564.xyz:443?security=tls&t
                     lastError = result.error || lastError;
                     const usable = rankOpenClashRecords(result.successRecords || []);
                     collected.push(...usable);
+                    const speedScope = rankOpenClashRecords(collected).slice(0, Math.max(targetCount, 40));
+                    const measured = await measureBestIpDownloadSpeeds(speedScope, {
+                        quiet: false,
+                        label: `自动优选第 ${round} 批下载测速`
+                    });
+                    const measuredByKey = new Map(measured.map(record => [bestIpRecordKey(record), record]));
+                    for (let index = 0; index < collected.length; index += 1) {
+                        const measuredRecord = measuredByKey.get(bestIpRecordKey(collected[index]));
+                        if (measuredRecord) collected[index] = measuredRecord;
+                    }
                     const ranked = rankOpenClashRecords(collected).slice(0, targetCount);
                     bestipCurrentRecords = ranked;
                     const textarea = document.getElementById('customIPs');
@@ -17133,7 +17329,8 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@et.651971564.xyz:443?security=tls&t
                         textarea.value = ranked.map(bestIpRecordToLine).join('\n');
                         refreshLineEditor(textarea);
                     }
-                    updateBestIpStatus(`<strong>${sceneLabel}</strong>：自动优选第 ${round} / ${maxRounds} 批，累计测试 ${totalTested} 个，找到 ${ranked.length} 个可用节点${providerName ? `，已同步 Provider ${providerName}` : ''}`);
+                    const speedCount = ranked.filter(record => Number.isFinite(Number(record.browserMbps)) && Number(record.browserMbps) > 0).length;
+                    updateBestIpStatus(`<strong>${sceneLabel}</strong>：自动优选第 ${round} / ${maxRounds} 批，累计测试 ${totalTested} 个，找到 ${ranked.length} 个可用节点，已完成 ${speedCount} 个下载测速${providerName ? `，已同步 Provider ${providerName}` : ''}`);
                     if (ranked.length >= targetCount) break;
                 }
                 const finalRecords = rankOpenClashRecords(collected).slice(0, targetCount);
