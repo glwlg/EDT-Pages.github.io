@@ -323,6 +323,13 @@
             color: #334155
         }
 
+        .bestip-hint {
+            margin-top: 8px;
+            font-size: 12px;
+            line-height: 1.5;
+            color: #64748b
+        }
+
         @media(max-width:768px) {
             .bestip-grid {
                 grid-template-columns: 1fr
@@ -2557,6 +2564,10 @@
 
         html.dark-mode .bestip-status strong {
             color: var(--text-primary)
+        }
+
+        html.dark-mode .bestip-hint {
+            color: var(--text-secondary)
         }
 
         html.dark-mode .form-group input:not([type="checkbox"]),
@@ -8545,8 +8556,8 @@
                                 </select>
                             </div>
                             <div class="form-group">
-                                <label for="mihomoTestLink">Mihomo测试订阅</label>
-                                <input type="text" id="mihomoTestLink" title="Mihomo测试订阅" readonly>
+                                <label for="mihomoTestLink">OpenClash候选订阅</label>
+                                <input type="text" id="mihomoTestLink" title="OpenClash候选订阅" readonly>
                             </div>
                             <div class="form-group">
                                 <label for="openclashController">OpenClash控制口</label>
@@ -8567,11 +8578,12 @@
                         </div>
                         <div class="bestip-actions">
                             <button type="button" class="btn btn-secondary" onclick="loadProfileBestIPs()">加载场景榜</button>
-                            <button type="button" class="btn btn-secondary" onclick="copyMihomoTestLink()">复制测试订阅</button>
+                            <button type="button" class="btn btn-secondary" onclick="copyMihomoTestLink()">复制候选订阅</button>
                             <button type="button" class="btn btn-secondary" onclick="saveProfileBestIPsFromTextarea()">保存场景榜</button>
                             <button type="button" class="btn btn-primary" onclick="testOpenClashProfile()">OpenClash实测</button>
                         </div>
                         <div class="bestip-status" id="bestipStatus">等待加载场景榜</div>
+                        <div class="bestip-hint">候选订阅只用于把节点导入 OpenClash 做实测，规则默认直连，不作为日常代理配置；实测保存后日常订阅继续使用普通订阅链接。</div>
                     </div>
 
                     <div id="randomIPSection" class="form-group">
@@ -16466,8 +16478,10 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@et.651971564.xyz:443?security=tls&t
             updateBestIpStatus('正在加载场景榜...');
             try {
                 const data = await fetchBestIpProfile(profile);
-                bestipCurrentRecords = Array.isArray(data.records) ? data.records : [];
                 const lines = data.lines?.length ? data.lines : (data.fallbackLines || []);
+                bestipCurrentRecords = Array.isArray(data.records) && data.records.length
+                    ? data.records
+                    : lines.map(parseBestIpLine).filter(Boolean);
                 if (textarea) {
                     textarea.value = lines.join('\n');
                     refreshLineEditor(textarea);
@@ -16484,7 +16498,7 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@et.651971564.xyz:443?security=tls&t
 
         async function saveBestIpRecords(records, source = 'manual') {
             const profile = getSelectedBestIpProfile();
-            const merged = [...bestipCurrentRecords, ...records.map(record => ({ ...record, source }))];
+            const merged = [...bestipCurrentRecords, ...records.map(record => ({ ...record, source: record.source || source }))];
             const response = await fetch(`/admin/bestip.json?profile=${encodeURIComponent(profile)}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json;charset=utf-8' },
@@ -16534,22 +16548,28 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@et.651971564.xyz:443?security=tls&t
             return response.json();
         }
 
+        function getOpenClashProxyIndex(name, fallbackIndex = 0) {
+            const match = String(name || '').match(/^GLWLG-.+?-(\d{2,})-/);
+            const parsed = match ? Number(match[1]) - 1 : fallbackIndex;
+            return Number.isInteger(parsed) && parsed >= 0 ? parsed : fallbackIndex;
+        }
+
         function findOpenClashProfileProxies(proxiesData, profile) {
             const scene = BESTIP_PROFILES[profile];
             const proxies = proxiesData?.proxies || {};
             const entries = Object.entries(proxies)
                 .filter(([name, proxy]) => name.includes('GLWLG') && !Array.isArray(proxy?.all));
             const sceneMatched = entries
-                .filter(([name]) => name.includes(scene.shortLabel) || name.includes(scene.label))
-                .map(([name]) => name);
-            if (sceneMatched.length) return sceneMatched;
-            return entries
+                .filter(([name]) => name.includes(scene.shortLabel) || name.includes(scene.label));
+            const matchedEntries = sceneMatched.length ? sceneMatched : entries
                 .filter(([name, proxy]) => {
                     if (!name.includes('GLWLG')) return false;
                     if (Array.isArray(proxy?.all)) return false;
                     return true;
-                })
-                .map(([name]) => name);
+                });
+            return matchedEntries
+                .map(([name], order) => ({ name, index: getOpenClashProxyIndex(name, order) }))
+                .sort((a, b) => a.index - b.index);
         }
 
         async function testOpenClashProfile() {
@@ -16558,7 +16578,13 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@et.651971564.xyz:443?security=tls&t
             try {
                 if (!bestipCurrentRecords.length) {
                     const data = await fetchBestIpProfile(profile);
-                    bestipCurrentRecords = Array.isArray(data.records) ? data.records : [];
+                    const lines = data.lines?.length ? data.lines : (data.fallbackLines || []);
+                    bestipCurrentRecords = Array.isArray(data.records) && data.records.length
+                        ? data.records
+                        : lines.map(parseBestIpLine).filter(Boolean);
+                }
+                if (!bestipCurrentRecords.length) {
+                    bestipCurrentRecords = recordsFromTextarea();
                 }
                 if (!bestipCurrentRecords.length) {
                     showToast('请先保存或加载场景优选地址', 'warning');
@@ -16566,30 +16592,36 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@et.651971564.xyz:443?security=tls&t
                     return;
                 }
                 const proxiesData = await fetchOpenClash('/proxies');
-                const proxyNames = findOpenClashProfileProxies(proxiesData, profile);
-                if (!proxyNames.length) {
-                    updateBestIpStatus('未在 OpenClash 中找到 GLWLG 节点，请先导入 Mihomo测试订阅');
+                const proxyItems = findOpenClashProfileProxies(proxiesData, profile);
+                if (!proxyItems.length) {
+                    updateBestIpStatus('未在 OpenClash 中找到 GLWLG 节点，请先导入 OpenClash候选订阅');
                     showToast('未找到 GLWLG 测试节点', 'warning');
                     return;
                 }
                 const testUrl = document.getElementById('openclashTestUrl').value.trim() || 'http://www.gstatic.com/generate_204';
                 const timeout = 5000;
                 const updated = bestipCurrentRecords.map(record => ({ ...record }));
-                const count = Math.min(proxyNames.length, updated.length);
-                for (let i = 0; i < count; i++) {
-                    updateBestIpStatus(`OpenClash 实测中 ${i + 1} / ${count}`);
+                const testItems = proxyItems.filter(item => updated[item.index]);
+                if (!testItems.length) {
+                    updateBestIpStatus('OpenClash 节点和当前场景榜没有匹配上，请重新复制候选订阅并导入');
+                    showToast('节点和场景榜不匹配', 'warning');
+                    return;
+                }
+                for (let i = 0; i < testItems.length; i++) {
+                    const item = testItems[i];
+                    updateBestIpStatus(`OpenClash 实测中 ${i + 1} / ${testItems.length}`);
                     try {
-                        const delayData = await fetchOpenClash(`/proxies/${encodeURIComponent(proxyNames[i])}/delay?url=${encodeURIComponent(testUrl)}&timeout=${timeout}`);
+                        const delayData = await fetchOpenClash(`/proxies/${encodeURIComponent(item.name)}/delay?url=${encodeURIComponent(testUrl)}&timeout=${timeout}`);
                         if (Number.isFinite(Number(delayData.delay))) {
-                            updated[i].clashDelayMs = Number(delayData.delay);
-                            updated[i].source = 'openclash';
-                            updated[i].testedAt = new Date().toISOString();
+                            updated[item.index].clashDelayMs = Number(delayData.delay);
+                            updated[item.index].source = 'openclash';
+                            updated[item.index].testedAt = new Date().toISOString();
                         } else {
-                            updated[i].failed = true;
+                            updated[item.index].failed = true;
                         }
                     } catch (error) {
-                        updated[i].failed = true;
-                        updated[i].error = error.message;
+                        updated[item.index].failed = true;
+                        updated[item.index].error = error.message;
                     }
                 }
                 bestipCurrentRecords = [];
