@@ -287,6 +287,48 @@
             font-family: 'Monaco', 'Courier New', monospace
         }
 
+        .bestip-panel {
+            border: 1px solid rgba(15, 23, 42, 0.1);
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 24px;
+            background: rgba(248, 250, 252, 0.72)
+        }
+
+        .bestip-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 14px
+        }
+
+        .bestip-grid .form-group {
+            margin-bottom: 0
+        }
+
+        .bestip-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 14px
+        }
+
+        .bestip-status {
+            margin-top: 12px;
+            font-size: 13px;
+            line-height: 1.5;
+            color: #64748b
+        }
+
+        .bestip-status strong {
+            color: #334155
+        }
+
+        @media(max-width:768px) {
+            .bestip-grid {
+                grid-template-columns: 1fr
+            }
+        }
+
         /* 按钮样式 */
         .btn {
             padding: 10px 20px;
@@ -2502,6 +2544,19 @@
             background: rgba(255, 255, 255, 0.12);
             color: #e5e7eb;
             box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12)
+        }
+
+        html.dark-mode .bestip-panel {
+            background: rgba(17, 24, 39, 0.45);
+            border-color: rgba(255, 255, 255, 0.12)
+        }
+
+        html.dark-mode .bestip-status {
+            color: var(--text-secondary)
+        }
+
+        html.dark-mode .bestip-status strong {
+            color: var(--text-primary)
         }
 
         html.dark-mode .form-group input:not([type="checkbox"]),
@@ -8479,6 +8534,46 @@
                         </select>
                     </div>
 
+                    <div class="bestip-panel" id="bestipPanel">
+                        <div class="bestip-grid">
+                            <div class="form-group">
+                                <label for="bestipProfile">场景档案</label>
+                                <select id="bestipProfile" title="场景档案" onchange="onBestIpProfileChange()">
+                                    <option value="cmcc-js-home">江苏移动家宽</option>
+                                    <option value="cu-mobile">联通手机</option>
+                                    <option value="cf-fallback">兜底</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="mihomoTestLink">Mihomo测试订阅</label>
+                                <input type="text" id="mihomoTestLink" title="Mihomo测试订阅" readonly>
+                            </div>
+                            <div class="form-group">
+                                <label for="openclashController">OpenClash控制口</label>
+                                <input type="text" id="openclashController" title="OpenClash控制口"
+                                    placeholder="http://192.168.1.1:9090" onchange="saveOpenClashControllerSettings()">
+                            </div>
+                            <div class="form-group">
+                                <label for="openclashSecret">OpenClash Secret</label>
+                                <input type="password" id="openclashSecret" title="OpenClash Secret"
+                                    autocomplete="off" onchange="saveOpenClashControllerSettings()">
+                            </div>
+                            <div class="form-group">
+                                <label for="openclashTestUrl">实测URL</label>
+                                <input type="text" id="openclashTestUrl" title="实测URL"
+                                    placeholder="http://www.gstatic.com/generate_204"
+                                    onchange="saveOpenClashControllerSettings()">
+                            </div>
+                        </div>
+                        <div class="bestip-actions">
+                            <button type="button" class="btn btn-secondary" onclick="loadProfileBestIPs()">加载场景榜</button>
+                            <button type="button" class="btn btn-secondary" onclick="copyMihomoTestLink()">复制测试订阅</button>
+                            <button type="button" class="btn btn-secondary" onclick="saveProfileBestIPsFromTextarea()">保存场景榜</button>
+                            <button type="button" class="btn btn-primary" onclick="testOpenClashProfile()">OpenClash实测</button>
+                        </div>
+                        <div class="bestip-status" id="bestipStatus">等待加载场景榜</div>
+                    </div>
+
                     <div id="randomIPSection" class="form-group">
                         <label for="randomCount">随机优选数量</label>
                         <input type="number" id="randomCount" title="随机优选数量 1~99" min="1" max="99" value="16"
@@ -12483,13 +12578,15 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@et.651971564.xyz:443?security=tls&t
                 }
 
                 function saveSelectedResults() {
-                    const lines = selectedResults().map(formatResultForAdmin).filter(Boolean);
+                    const selected = selectedResults();
+                    const lines = selected.map(formatResultForAdmin).filter(Boolean);
+                    const records = selected.map(formatResultRecordForAdmin).filter(Boolean);
                     if (!lines.length) {
                         updateSelectionState();
                         return;
                     }
 
-                    if (sendSelectedResultsToParent(lines)) return;
+                    if (sendSelectedResultsToParent(lines, records)) return;
                     copySelectedResults(lines);
                 }
 
@@ -12630,18 +12727,33 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@et.651971564.xyz:443?security=tls&t
                     return `${item.address}#${item.country} ${item.type}[${details.join(" ")}]`;
                 }
 
-                function sendSelectedResultsToParent(lines) {
+                function formatResultRecordForAdmin(item) {
+                    const parsed = parseAddressWithPort(item.address);
+                    if (!parsed) return null;
+                    return {
+                        address: parsed.ip,
+                        port: parsed.port,
+                        remark: `${item.country || "未知"} ${item.type || ""}`.trim(),
+                        browserLatencyMs: Number.isFinite(item.latency) ? item.latency : null,
+                        browserMbps: item.speedState === "done" && Number.isFinite(item.speedMbps) ? item.speedMbps : null,
+                        colo: item.colo || "",
+                        source: "browser",
+                        testedAt: new Date().toISOString()
+                    };
+                }
+
+                function sendSelectedResultsToParent(lines, records) {
                     if (!window.parent || window.parent === window) return false;
                     try {
                         if (typeof window.parent.appendOnlineOptimizeSelections === "function") {
-                            return Boolean(window.parent.appendOnlineOptimizeSelections(lines));
+                            return Boolean(window.parent.appendOnlineOptimizeSelections(lines, records));
                         }
                     } catch (error) {
                         // Fall back to postMessage below when direct same-origin access is unavailable.
                     }
 
                     try {
-                        window.parent.postMessage({ type: "bestcf-save-results", lines }, "*");
+                        window.parent.postMessage({ type: "bestcf-save-results", lines, records }, "*");
                         return true;
                     } catch (error) {
                         return false;
@@ -14355,6 +14467,13 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@et.651971564.xyz:443?security=tls&t
         let chainProxyFeatureEnabled = false;
         let proxyFeatureAvailabilityInitialized = false;
         const PROXY_PROTOCOLS = ['socks5', 'http', 'https', 'turn', 'sstp'];
+        const BESTIP_PROFILES = {
+            'cmcc-js-home': { label: '江苏移动家宽', shortLabel: '江苏移动', asOrg: 'cmcc' },
+            'cu-mobile': { label: '联通手机', shortLabel: '联通手机', asOrg: 'cu' },
+            'cf-fallback': { label: '兜底', shortLabel: '兜底', asOrg: 'cf' }
+        };
+        const BESTIP_CONTROLLER_STORAGE_KEY = 'glwlgBestIpController';
+        let bestipCurrentRecords = [];
 
         function parseForcedLowPerformanceMode() {
             try {
@@ -15970,6 +16089,7 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@et.651971564.xyz:443?security=tls&t
             document.getElementById('base64Link').value = `https://${host}/sub?token=${token}&b64`;
             document.getElementById('clashLink').value = `https://${host}/sub?token=${token}&clash`;
             document.getElementById('singboxLink').value = `https://${host}/sub?token=${token}&sb`;
+            updateMihomoTestLink();
 
             // 编辑订阅生成
             const local = currentConfig.优选订阅生成?.local ?? true;
@@ -16187,6 +16307,303 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@et.651971564.xyz:443?security=tls&t
             percentageCenterEl.textContent = `请求使用进度: ${total.toLocaleString()} (${percentage}%)`;
         }
 
+        function getSelectedBestIpProfile() {
+            const select = document.getElementById('bestipProfile');
+            return BESTIP_PROFILES[select?.value] ? select.value : 'cmcc-js-home';
+        }
+
+        function updateBestIpStatus(html) {
+            const el = document.getElementById('bestipStatus');
+            if (el) el.innerHTML = html;
+        }
+
+        function buildMihomoTestLink(profile = getSelectedBestIpProfile()) {
+            const token = currentConfig?.优选订阅生成?.TOKEN;
+            if (!token) return '';
+            const params = new URLSearchParams({ token, target: 'glwlg-mihomo', profile });
+            return `${window.location.origin}/sub?${params.toString()}`;
+        }
+
+        function updateMihomoTestLink() {
+            const input = document.getElementById('mihomoTestLink');
+            if (input) input.value = buildMihomoTestLink();
+        }
+
+        function loadOpenClashControllerSettings() {
+            let settings = {};
+            try {
+                settings = JSON.parse(localStorage.getItem(BESTIP_CONTROLLER_STORAGE_KEY) || '{}');
+            } catch (_) {
+                settings = {};
+            }
+            document.getElementById('openclashController').value = settings.controller || 'http://192.168.1.1:9090';
+            document.getElementById('openclashSecret').value = settings.secret || '';
+            document.getElementById('openclashTestUrl').value = settings.testUrl || 'http://www.gstatic.com/generate_204';
+            const savedProfile = localStorage.getItem('glwlgBestIpProfile');
+            if (savedProfile && BESTIP_PROFILES[savedProfile]) {
+                document.getElementById('bestipProfile').value = savedProfile;
+            }
+        }
+
+        function saveOpenClashControllerSettings() {
+            const settings = {
+                controller: document.getElementById('openclashController').value.trim(),
+                secret: document.getElementById('openclashSecret').value,
+                testUrl: document.getElementById('openclashTestUrl').value.trim()
+            };
+            localStorage.setItem(BESTIP_CONTROLLER_STORAGE_KEY, JSON.stringify(settings));
+        }
+
+        function initializeBestIpPanel() {
+            loadOpenClashControllerSettings();
+            updateMihomoTestLink();
+            updateBestIpStatus('等待加载场景榜');
+            refreshBestIpNetworkHint();
+        }
+
+        function profileFromCfInfo(cf) {
+            const asn = String(cf?.asn || '');
+            const org = String(cf?.asOrganization || '').toLowerCase();
+            if (['9808', '24400', '56040', '56041', '56044'].includes(asn) || /cmi|cmnet|chinamobile|china mobile|cmcc|mobile communications/.test(org)) {
+                return 'cmcc-js-home';
+            }
+            if (['4837', '4814', '9929', '17623', '17816'].includes(asn) || /china169|china unicom|chinaunicom|cucc|cncgroup|cuii|netcom/.test(org)) {
+                return 'cu-mobile';
+            }
+            return 'cf-fallback';
+        }
+
+        async function refreshBestIpNetworkHint() {
+            try {
+                const response = await fetch('/admin/cf.json?_t=' + Date.now(), {
+                    headers: { 'Cache-Control': 'no-cache' }
+                });
+                if (!response.ok) return;
+                const cf = await response.json();
+                const matchedProfile = profileFromCfInfo(cf);
+                if (!localStorage.getItem('glwlgBestIpProfile')) {
+                    const select = document.getElementById('bestipProfile');
+                    if (select) select.value = matchedProfile;
+                    updateMihomoTestLink();
+                }
+                const scene = BESTIP_PROFILES[matchedProfile];
+                const asnText = cf?.asn ? `AS${cf.asn}` : 'AS未知';
+                const orgText = cf?.asOrganization || 'Unknown';
+                updateBestIpStatus(`当前出口 ${asnText} ${orgText}，自动订阅匹配 <strong>${scene.label}</strong>`);
+            } catch (_) {
+                // 静态预览或未登录时没有 cf.json，不阻塞场景优选操作。
+            }
+        }
+
+        function onBestIpProfileChange() {
+            localStorage.setItem('glwlgBestIpProfile', getSelectedBestIpProfile());
+            updateMihomoTestLink();
+            bestipCurrentRecords = [];
+            if (document.getElementById('ipMode')?.value === 'custom') loadCustomIPs();
+            updateBestIpStatus('已切换场景，等待加载场景榜');
+        }
+
+        function parseBestIpLine(line) {
+            const text = String(line || '').trim();
+            if (!text) return null;
+            const hashIndex = text.indexOf('#');
+            const addressPart = (hashIndex === -1 ? text : text.slice(0, hashIndex)).trim();
+            const remark = hashIndex === -1 ? '' : text.slice(hashIndex + 1).trim();
+            let address = '', port = 443;
+            const ipv6 = addressPart.match(/^\[([0-9a-fA-F:.]+)](?::(\d{1,5}))?$/);
+            if (ipv6) {
+                address = ipv6[1];
+                port = ipv6[2] ? Number(ipv6[2]) : 443;
+            } else {
+                const colonIndex = addressPart.lastIndexOf(':');
+                if (colonIndex > -1 && /^\d{1,5}$/.test(addressPart.slice(colonIndex + 1))) {
+                    address = addressPart.slice(0, colonIndex);
+                    port = Number(addressPart.slice(colonIndex + 1));
+                } else {
+                    address = addressPart;
+                }
+            }
+            if (!address || !Number.isInteger(port) || port < 1 || port > 65535) return null;
+            return { address: address.replace(/^\[|]$/g, ''), port, remark, source: 'manual' };
+        }
+
+        function bestIpRecordToLine(record) {
+            const address = String(record.address || '').replace(/^\[|]$/g, '');
+            const port = Number(record.port) || 443;
+            const displayAddress = address.includes(':') ? `[${address}]:${port}` : `${address}:${port}`;
+            const metrics = [];
+            if (Number.isFinite(Number(record.clashDelayMs))) metrics.push(`Clash ${Math.round(Number(record.clashDelayMs))}ms`);
+            if (Number.isFinite(Number(record.browserLatencyMs))) metrics.push(`网页 ${Math.round(Number(record.browserLatencyMs))}ms`);
+            if (Number.isFinite(Number(record.browserMbps))) metrics.push(`${Number(record.browserMbps).toFixed(2)}Mbps`);
+            if (record.colo) metrics.push(record.colo);
+            const remark = String(record.remark || BESTIP_PROFILES[getSelectedBestIpProfile()].shortLabel || 'GLWLG').trim();
+            return `${displayAddress}#${remark}${metrics.length ? '[' + metrics.join(' ') + ']' : ''}`;
+        }
+
+        function recordsFromTextarea() {
+            return document.getElementById('customIPs').value
+                .split(/\r?\n/)
+                .map(parseBestIpLine)
+                .filter(Boolean);
+        }
+
+        async function fetchBestIpProfile(profile = getSelectedBestIpProfile()) {
+            const response = await fetch(`/admin/bestip.json?profile=${encodeURIComponent(profile)}&_t=${Date.now()}`, {
+                headers: {
+                    'Cache-Control': 'no-cache, no-store, must-revalidate',
+                    'Pragma': 'no-cache',
+                    'Expires': '0'
+                }
+            });
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            return response.json();
+        }
+
+        async function loadProfileBestIPs() {
+            const profile = getSelectedBestIpProfile();
+            const textarea = document.getElementById('customIPs');
+            if (textarea) textarea.disabled = true;
+            updateBestIpStatus('正在加载场景榜...');
+            try {
+                const data = await fetchBestIpProfile(profile);
+                bestipCurrentRecords = Array.isArray(data.records) ? data.records : [];
+                const lines = data.lines?.length ? data.lines : (data.fallbackLines || []);
+                if (textarea) {
+                    textarea.value = lines.join('\n');
+                    refreshLineEditor(textarea);
+                }
+                const sourceText = data.records?.length ? '场景实测榜' : (data.fallbackSource === 'legacy' ? '旧自定义列表' : data.fallbackSource === 'random' ? '运营商随机候选' : '空');
+                updateBestIpStatus(`<strong>${data.label || BESTIP_PROFILES[profile].label}</strong>：${lines.length} 条，来源 ${sourceText}`);
+            } catch (error) {
+                updateBestIpStatus(`加载失败：${error.message}`);
+                showToast('加载场景榜失败', 'error');
+            } finally {
+                if (textarea) textarea.disabled = false;
+            }
+        }
+
+        async function saveBestIpRecords(records, source = 'manual') {
+            const profile = getSelectedBestIpProfile();
+            const merged = [...bestipCurrentRecords, ...records.map(record => ({ ...record, source }))];
+            const response = await fetch(`/admin/bestip.json?profile=${encodeURIComponent(profile)}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json;charset=utf-8' },
+                body: JSON.stringify({ records: merged })
+            });
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok || data.error) throw new Error(data.error || `HTTP ${response.status}`);
+            bestipCurrentRecords = Array.isArray(data.records) ? data.records : [];
+            const textarea = document.getElementById('customIPs');
+            if (textarea && bestipCurrentRecords.length) {
+                textarea.value = bestipCurrentRecords.map(bestIpRecordToLine).join('\n');
+                refreshLineEditor(textarea);
+            }
+            updateBestIpStatus(`<strong>${data.label || BESTIP_PROFILES[profile].label}</strong>：已保存 ${data.count ?? bestipCurrentRecords.length} 条场景优选`);
+            return data;
+        }
+
+        async function saveProfileBestIPsFromTextarea() {
+            const records = recordsFromTextarea();
+            if (!records.length) {
+                showToast('没有可保存的场景优选地址', 'warning');
+                return;
+            }
+            try {
+                bestipCurrentRecords = [];
+                await saveBestIpRecords(records, 'manual');
+                showToast('✅ 场景优选已保存', 'success');
+            } catch (error) {
+                showToast('保存场景优选失败: ' + error.message, 'error');
+            }
+        }
+
+        function copyMihomoTestLink() {
+            updateMihomoTestLink();
+            copySubscription('mihomoTestLink');
+        }
+
+        async function fetchOpenClash(path, options = {}) {
+            saveOpenClashControllerSettings();
+            const controller = document.getElementById('openclashController').value.trim().replace(/\/+$/, '');
+            const secret = document.getElementById('openclashSecret').value;
+            if (!controller) throw new Error('OpenClash控制口不能为空');
+            const headers = { ...(options.headers || {}) };
+            if (secret) headers.Authorization = `Bearer ${secret}`;
+            const response = await fetch(controller + path, { ...options, headers });
+            if (!response.ok) throw new Error(`OpenClash API HTTP ${response.status}`);
+            return response.json();
+        }
+
+        function findOpenClashProfileProxies(proxiesData, profile) {
+            const scene = BESTIP_PROFILES[profile];
+            const proxies = proxiesData?.proxies || {};
+            const entries = Object.entries(proxies)
+                .filter(([name, proxy]) => name.includes('GLWLG') && !Array.isArray(proxy?.all));
+            const sceneMatched = entries
+                .filter(([name]) => name.includes(scene.shortLabel) || name.includes(scene.label))
+                .map(([name]) => name);
+            if (sceneMatched.length) return sceneMatched;
+            return entries
+                .filter(([name, proxy]) => {
+                    if (!name.includes('GLWLG')) return false;
+                    if (Array.isArray(proxy?.all)) return false;
+                    return true;
+                })
+                .map(([name]) => name);
+        }
+
+        async function testOpenClashProfile() {
+            const profile = getSelectedBestIpProfile();
+            updateBestIpStatus('正在连接 OpenClash 控制口...');
+            try {
+                if (!bestipCurrentRecords.length) {
+                    const data = await fetchBestIpProfile(profile);
+                    bestipCurrentRecords = Array.isArray(data.records) ? data.records : [];
+                }
+                if (!bestipCurrentRecords.length) {
+                    showToast('请先保存或加载场景优选地址', 'warning');
+                    updateBestIpStatus('没有可实测的场景优选地址');
+                    return;
+                }
+                const proxiesData = await fetchOpenClash('/proxies');
+                const proxyNames = findOpenClashProfileProxies(proxiesData, profile);
+                if (!proxyNames.length) {
+                    updateBestIpStatus('未在 OpenClash 中找到 GLWLG 节点，请先导入 Mihomo测试订阅');
+                    showToast('未找到 GLWLG 测试节点', 'warning');
+                    return;
+                }
+                const testUrl = document.getElementById('openclashTestUrl').value.trim() || 'http://www.gstatic.com/generate_204';
+                const timeout = 5000;
+                const updated = bestipCurrentRecords.map(record => ({ ...record }));
+                const count = Math.min(proxyNames.length, updated.length);
+                for (let i = 0; i < count; i++) {
+                    updateBestIpStatus(`OpenClash 实测中 ${i + 1} / ${count}`);
+                    try {
+                        const delayData = await fetchOpenClash(`/proxies/${encodeURIComponent(proxyNames[i])}/delay?url=${encodeURIComponent(testUrl)}&timeout=${timeout}`);
+                        if (Number.isFinite(Number(delayData.delay))) {
+                            updated[i].clashDelayMs = Number(delayData.delay);
+                            updated[i].source = 'openclash';
+                            updated[i].testedAt = new Date().toISOString();
+                        } else {
+                            updated[i].failed = true;
+                        }
+                    } catch (error) {
+                        updated[i].failed = true;
+                        updated[i].error = error.message;
+                    }
+                }
+                bestipCurrentRecords = [];
+                await saveBestIpRecords(updated, 'openclash');
+                showToast('✅ OpenClash 实测结果已合并保存', 'success');
+            } catch (error) {
+                const message = /Failed to fetch|NetworkError|Load failed/i.test(error.message)
+                    ? 'OpenClash 控制口无法访问，检查 CORS、私有网络访问、HTTP/HTTPS 混合内容或防火墙'
+                    : error.message;
+                updateBestIpStatus(message);
+                showToast('OpenClash 实测失败', 'error');
+            }
+        }
+
         async function loadCustomIPs() {
             const textarea = document.getElementById('customIPs');
             textarea.disabled = true;
@@ -16194,7 +16611,8 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@et.651971564.xyz:443?security=tls&t
             if (textarea._refreshLineEditor) textarea._refreshLineEditor();
 
             try {
-                const response = await fetch('/admin/ADD.txt?_t=' + Date.now(), {
+                const profile = getSelectedBestIpProfile();
+                const response = await fetch(`/admin/ADD.txt?profile=${encodeURIComponent(profile)}&_t=${Date.now()}`, {
                     headers: {
                         'Cache-Control': 'no-cache, no-store, must-revalidate',
                         'Pragma': 'no-cache',
@@ -16203,12 +16621,16 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@et.651971564.xyz:443?security=tls&t
                 });
                 if (response.ok) {
                     textarea.value = await response.text();
+                    bestipCurrentRecords = recordsFromTextarea();
+                    updateBestIpStatus(`<strong>${BESTIP_PROFILES[profile].label}</strong>：已加载 ${bestipCurrentRecords.length} 条场景优选`);
                 } else {
                     textarea.value = '';
+                    bestipCurrentRecords = [];
                 }
             } catch (error) {
                 showToast('加载自定义IP失败', 'error');
                 textarea.value = '';
+                bestipCurrentRecords = [];
             } finally {
                 textarea.disabled = false;
                 if (textarea._refreshLineEditor) textarea._refreshLineEditor();
@@ -17527,7 +17949,8 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@et.651971564.xyz:443?security=tls&t
             if (mode === 'custom') {
                 const customIPs = document.getElementById('customIPs').value;
                 try {
-                    await fetch('/admin/ADD.txt', { method: 'POST', body: customIPs });
+                    const profile = getSelectedBestIpProfile();
+                    await fetch(`/admin/ADD.txt?profile=${encodeURIComponent(profile)}`, { method: 'POST', body: customIPs });
                 } catch (error) {
                     showToast('保存自定义IP失败', 'error');
                     return;
@@ -21672,7 +22095,7 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@et.651971564.xyz:443?security=tls&t
             }
         }
 
-        function appendOnlineOptimizeSelections(lines) {
+        function appendOnlineOptimizeSelections(lines, records = []) {
             if (!Array.isArray(lines) || lines.length === 0) {
                 showToast('请先勾选需要保存的优选结果', 'warning');
                 return false;
@@ -21697,6 +22120,11 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@et.651971564.xyz:443?security=tls&t
             textarea.value = currentValue ? `${currentValue}\n${newLines.join('\n')}` : newLines.join('\n');
             refreshLineEditor(textarea);
             markModified('sub');
+            if (Array.isArray(records) && records.length) {
+                saveBestIpRecords(records, 'browser')
+                    .then(() => showToast(`✅ 已保存 ${records.length} 条浏览器测速结果到场景榜`, 'success'))
+                    .catch(error => showToast('保存场景测速结果失败: ' + error.message, 'error'));
+            }
             showToast(`✅ 已追加 ${newLines.length} 条优选结果到自定义优选地址`, 'success');
             closeOnlineOptimizeModal();
             return true;
@@ -21708,7 +22136,7 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@et.651971564.xyz:443?security=tls&t
 
             const data = event.data || {};
             if (data.type === 'bestcf-save-results') {
-                appendOnlineOptimizeSelections(data.lines);
+                appendOnlineOptimizeSelections(data.lines, data.records);
             } else if (data.type === 'bestcf-close') {
                 closeOnlineOptimizeModal();
             } else if (data.type === 'bestcf-force-reload') {
@@ -22101,6 +22529,7 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@et.651971564.xyz:443?security=tls&t
             loadConfig();
             initUserMode();
             initLineEditor('customIPs');
+            initializeBestIpPanel();
             initNodeUUIDEasterEgg();
             // 独立预加载 SubConfig 数据，不阻塞主流程
             loadSubConfigData().catch(err => console.error('SubConfig预加载失败:', err));
