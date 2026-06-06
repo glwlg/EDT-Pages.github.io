@@ -8601,7 +8601,7 @@
                             <button type="button" class="btn btn-primary" data-bestip-action="test">OpenClash实测</button>
                         </div>
                         <div class="bestip-status" id="bestipStatus">等待加载场景榜</div>
-                        <div class="bestip-hint">候选订阅只用于把节点导入 OpenClash 做实测，规则默认直连，不作为日常代理配置；连通性预筛会剪到前 20 个，实测/自动优选会补下载测速后保存前 20 个。</div>
+                        <div class="bestip-hint">候选订阅只用于把节点导入 OpenClash 做实测，规则默认直连；自动优选会探测地区并按大中华最多 5、美国 5、日本 5、欧洲 5 保存，欧洲不足时用日本补。</div>
                     </div>
 
                     <div id="randomIPSection" class="form-group">
@@ -14498,15 +14498,30 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@et.651971564.xyz:443?security=tls&t
         let proxyFeatureAvailabilityInitialized = false;
         const PROXY_PROTOCOLS = ['socks5', 'http', 'https', 'turn', 'sstp'];
         const BESTIP_PROFILES = {
-            'cmcc-js-home': { label: '江苏移动家宽', shortLabel: '江苏移动', asOrg: 'cmcc', country: 'CN', flag: '🇨🇳' },
-            'cu-mobile': { label: '联通手机', shortLabel: '联通手机', asOrg: 'cu', country: 'CN', flag: '🇨🇳' },
-            'cf-fallback': { label: '兜底', shortLabel: '兜底', asOrg: 'cf', country: '', flag: '🌐' }
+            'cmcc-js-home': { label: '江苏移动家宽', shortLabel: '江苏移动', asOrg: 'cmcc' },
+            'cu-mobile': { label: '联通手机', shortLabel: '联通手机', asOrg: 'cu' },
+            'cf-fallback': { label: '兜底', shortLabel: '兜底', asOrg: 'cf' }
         };
         const BESTIP_TARGET_COUNT = 20;
         const BESTIP_DELAY_BUCKET_MS = 150;
         const BESTIP_SPEED_TEST_BYTES = 8_000_000;
         const BESTIP_SPEED_TEST_TIMEOUT_MS = 10000;
         const BESTIP_SPEED_TEST_CONCURRENCY = 3;
+        const BESTIP_METADATA_TEST_LIMIT = 80;
+        const BESTIP_CHINA_QUOTA = 5;
+        const BESTIP_US_QUOTA = 5;
+        const BESTIP_JP_QUOTA = 5;
+        const BESTIP_EU_QUOTA = 5;
+        const BESTIP_CHINA_COUNTRIES = new Set(['CN', 'HK', 'TW', 'MO']);
+        const BESTIP_EUROPE_COUNTRIES = new Set(['AL', 'AD', 'AT', 'BY', 'BE', 'BA', 'BG', 'HR', 'CY', 'CZ', 'DK', 'EE', 'FI', 'FR', 'DE', 'GI', 'GR', 'HU', 'IS', 'IE', 'IT', 'XK', 'LV', 'LI', 'LT', 'LU', 'MT', 'MD', 'MC', 'ME', 'NL', 'MK', 'NO', 'PL', 'PT', 'RO', 'RU', 'SM', 'RS', 'SK', 'SI', 'ES', 'SE', 'CH', 'TR', 'UA', 'GB', 'UK', 'VA']);
+        const BESTIP_COUNTRY_NAMES = {
+            CN: '中国', HK: '香港', TW: '台湾', MO: '澳门',
+            US: '美国', JP: '日本', SG: '新加坡', KR: '韩国',
+            GB: '英国', UK: '英国', DE: '德国', FR: '法国', NL: '荷兰',
+            IT: '意大利', ES: '西班牙', SE: '瑞典', CH: '瑞士', PL: '波兰',
+            FI: '芬兰', NO: '挪威', DK: '丹麦', IE: '爱尔兰', AT: '奥地利',
+            BE: '比利时', PT: '葡萄牙', CZ: '捷克', RO: '罗马尼亚'
+        };
         const BESTIP_CONTROLLER_STORAGE_KEY = 'glwlgBestIpController';
         const BESTIP_CANDIDATE_BATCH_STORAGE_KEY = 'glwlgBestIpCandidateBatch';
         let bestipCurrentRecords = [];
@@ -16378,30 +16393,62 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@et.651971564.xyz:443?security=tls&t
             return String(remark || '').replace(/^[\u{1F1E6}-\u{1F1FF}]{2}\s*/u, '').trim();
         }
 
+        function normalizeBestIpCountry(country) {
+            const code = String(country || '').trim().toUpperCase();
+            return /^[A-Z]{2}$/.test(code) ? code : '';
+        }
+
+        function bestIpCountryName(country) {
+            const code = normalizeBestIpCountry(country);
+            return BESTIP_COUNTRY_NAMES[code] || code;
+        }
+
         function getBestIpRecordCountry(record, profile = getSelectedBestIpProfile()) {
-            const scene = BESTIP_PROFILES[profile] || BESTIP_PROFILES['cf-fallback'];
             const explicit = String(record?.country || record?.countryCode || record?.cc || '').trim().toUpperCase();
             if (/^[A-Z]{2}$/.test(explicit)) return explicit;
             const flagCountry = bestIpFlagToCountry(record?.flag || getBestIpRemarkFlag(record?.remark));
-            return flagCountry || scene.country || '';
+            return flagCountry || '';
         }
 
         function getBestIpRecordFlag(record, profile = getSelectedBestIpProfile()) {
-            const scene = BESTIP_PROFILES[profile] || BESTIP_PROFILES['cf-fallback'];
             return String(record?.flag || '').trim() ||
                 bestIpCountryToFlag(getBestIpRecordCountry(record, profile)) ||
-                scene.flag ||
                 '🌐';
+        }
+
+        function bestIpLocationLabel(record, profile = getSelectedBestIpProfile()) {
+            const flag = getBestIpRecordFlag(record, profile);
+            const country = getBestIpRecordCountry(record, profile);
+            const countryName = bestIpCountryName(country);
+            const colo = String(record?.colo || '').trim().toUpperCase();
+            const city = String(record?.city || '').trim();
+            const region = String(record?.regionCode || record?.region || '').trim();
+            return [flag, countryName, colo || city || (region.toUpperCase() !== country ? region : '')]
+                .filter(Boolean)
+                .join(' ')
+                .trim();
+        }
+
+        function stripBestIpLocationPrefix(remark, record, profile = getSelectedBestIpProfile()) {
+            let text = stripBestIpRemarkFlag(remark);
+            const country = getBestIpRecordCountry(record, profile);
+            const countryNames = [bestIpCountryName(country), country].filter(Boolean);
+            for (const name of countryNames) {
+                if (text.startsWith(name)) text = text.slice(name.length).trim();
+            }
+            const colo = String(record?.colo || '').trim().toUpperCase();
+            if (colo && text.toUpperCase().startsWith(colo)) text = text.slice(colo.length).trim();
+            return text;
         }
 
         function buildBestIpRecordRemark(record, profile = getSelectedBestIpProfile()) {
             const scene = BESTIP_PROFILES[profile] || BESTIP_PROFILES['cf-fallback'];
-            const flag = getBestIpRecordFlag(record, profile);
-            const rawRemark = stripBestIpRemarkFlag(record?.remark || scene.shortLabel || scene.label || 'GLWLG');
+            const location = bestIpLocationLabel(record, profile);
+            const rawRemark = stripBestIpLocationPrefix(record?.remark || scene.shortLabel || scene.label || 'GLWLG', record, profile);
             const sceneRemark = rawRemark.includes(scene.shortLabel) || rawRemark.includes(scene.label)
                 ? rawRemark
                 : `${scene.shortLabel || scene.label} ${rawRemark}`.trim();
-            return `${flag} ${sceneRemark}`.trim();
+            return `${location} ${sceneRemark}`.trim();
         }
 
         function getBestIpCandidateBatch() {
@@ -17007,15 +17054,47 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@et.651971564.xyz:443?security=tls&t
             return '';
         }
 
-        function buildBestIpDownloadProbeUrl(record) {
+        function buildBestIpProbeUrl(record, path, params = {}) {
             const label = bestIpAddressToSpeedLabel(record?.address);
             const port = Number(record?.port) || 443;
             if (!label || port < 1 || port > 65535) return '';
-            const search = new URLSearchParams({
-                _t: String(Date.now()),
-                bytes: String(BESTIP_SPEED_TEST_BYTES)
-            });
-            return `https://${label}.nip.cmliussss.hidns.vip:${port}/__down?${search.toString()}`;
+            const search = new URLSearchParams({ _t: String(Date.now()), ...params });
+            return `https://${label}.nip.cmliussss.hidns.vip:${port}/${path}?${search.toString()}`;
+        }
+
+        function buildBestIpDownloadProbeUrl(record) {
+            return buildBestIpProbeUrl(record, '__down', { bytes: String(BESTIP_SPEED_TEST_BYTES) });
+        }
+
+        async function fetchBestIpMetadata(record, timeoutMs = 5000) {
+            const url = buildBestIpProbeUrl(record, 'ip.json');
+            if (!url) throw new Error('仅支持 IP 候选探测地区');
+            const controller = new AbortController();
+            const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+            try {
+                const response = await fetch(url, {
+                    method: 'GET',
+                    cache: 'no-store',
+                    signal: controller.signal
+                });
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                const data = await response.json();
+                const country = normalizeBestIpCountry(data.country);
+                return {
+                    country,
+                    flag: bestIpCountryToFlag(country) || '🌐',
+                    continent: String(data.continent || '').trim().toUpperCase(),
+                    colo: String(data.colo || '').trim().toUpperCase(),
+                    city: String(data.city || '').trim(),
+                    region: String(data.region || '').trim(),
+                    regionCode: String(data.regionCode || '').trim(),
+                    responseIp: String(data.ip || '').trim(),
+                    cnIspCode: String(data.cnIspCode || '').trim(),
+                    metadataTestedAt: new Date().toISOString()
+                };
+            } finally {
+                window.clearTimeout(timer);
+            }
         }
 
         async function measureBestIpDownloadSpeed(record, timeoutMs = BESTIP_SPEED_TEST_TIMEOUT_MS) {
@@ -17063,7 +17142,7 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@et.651971564.xyz:443?security=tls&t
         async function measureBestIpDownloadSpeeds(records, { quiet = false, label = '下载测速' } = {}) {
             const targets = rankOpenClashRecords(records)
                 .filter(record => record.source !== 'origin')
-                .slice(0, Math.max(BESTIP_TARGET_COUNT, Math.min(40, records.length)));
+                .slice(0, Math.max(BESTIP_TARGET_COUNT, Math.min(BESTIP_METADATA_TEST_LIMIT, records.length)));
             if (!targets.length) return [];
             const byKey = new Map(records.map(record => [bestIpRecordKey(record), { ...record }]));
             let completed = 0;
@@ -17072,24 +17151,36 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@et.651971564.xyz:443?security=tls&t
             const runOne = async (record) => {
                 const key = bestIpRecordKey(record);
                 const current = byKey.get(key) || { ...record };
-                if (Number.isFinite(Number(current.browserMbps)) && Number(current.browserMbps) > 0) {
+                const hasSpeed = Number.isFinite(Number(current.browserMbps)) && Number(current.browserMbps) > 0;
+                const hasLocation = Boolean(getBestIpRecordCountry(current) && current.colo);
+                if (hasSpeed && hasLocation) {
                     completed += 1;
                     return;
                 }
                 try {
-                    const speed = await measureBestIpDownloadSpeed(current);
-                    current.browserMbps = Number(speed.toFixed(2));
-                    current.speedTestedAt = new Date().toISOString();
+                    if (!hasLocation) {
+                        Object.assign(current, await fetchBestIpMetadata(current));
+                    }
+                    if (!hasSpeed) {
+                        const speed = await measureBestIpDownloadSpeed(current);
+                        current.browserMbps = Number(speed.toFixed(2));
+                        current.speedTestedAt = new Date().toISOString();
+                    }
                     current.country = getBestIpRecordCountry(current);
                     current.flag = getBestIpRecordFlag(current);
                     delete current.speedError;
+                    delete current.metadataError;
                 } catch (error) {
-                    current.browserMbps = null;
-                    current.speedError = error.message;
+                    if (!hasSpeed) current.browserMbps = null;
+                    if (!getBestIpRecordCountry(current)) current.metadataError = error.message;
+                    else current.speedError = error.message;
                 }
                 byKey.set(key, current);
                 completed += 1;
-                if (!quiet) updateBestIpStatus(`${label} ${completed} / ${targets.length}：${current.address}:${current.port || 443}`);
+                if (!quiet) {
+                    const location = bestIpLocationLabel(current) || '地区未知';
+                    updateBestIpStatus(`${label} ${completed} / ${targets.length}：${current.address}:${current.port || 443} ${location}`);
+                }
             };
             const workers = Array.from({ length: concurrency }, async () => {
                 while (cursor < targets.length) {
@@ -17216,9 +17307,10 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@et.651971564.xyz:443?security=tls&t
                     successRecords = rankOpenClashRecords(await measureBestIpDownloadSpeeds(successRecords, {
                         quiet,
                         label: '下载测速'
-                    })).slice(0, BESTIP_TARGET_COUNT);
+                    }));
+                    successRecords = selectBalancedBestIpRecords(successRecords, BESTIP_TARGET_COUNT);
                 } else {
-                    successRecords = rankOpenClashRecords(successRecords).slice(0, BESTIP_TARGET_COUNT);
+                    successRecords = selectBalancedBestIpRecords(successRecords, BESTIP_TARGET_COUNT);
                 }
                 if (pruneProvider) {
                     await refreshProviderWithCurrentCandidates(providerName, successRecords);
@@ -17234,7 +17326,7 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@et.651971564.xyz:443?security=tls&t
                     const nextAction = originSuccess && successRecords.length === 1
                         ? '只有基准域名可用，继续生成下一批候选或换端口策略。'
                         : '已把可通候选筛到文本框，确认后点“保存场景榜”。';
-                    updateBestIpStatus(`<strong>${sceneLabel}</strong>：预筛 ${testedCount} 个，成功 ${rawSuccessCount} 个，已保留前 ${successRecords.length} 个，失败 ${failedCount} 个。${nextAction}`);
+                    updateBestIpStatus(`<strong>${sceneLabel}</strong>：预筛 ${testedCount} 个，成功 ${rawSuccessCount} 个，已按地区配额保留 ${successRecords.length} 个，失败 ${failedCount} 个。${formatBestIpDistribution(successRecords)}。${nextAction}`);
                     showToast('✅ 连通性预筛完成', 'success');
                     return { successRecords, failedRecords, testedCount, failedCount, providerName, originSuccess };
                 }
@@ -17244,7 +17336,7 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@et.651971564.xyz:443?security=tls&t
                 const nextAction = originSuccess && successRecords.length === 1
                     ? '当前只有基准域名可用，说明 ET 配置本身可连但候选 IP 不行；继续生成下一批候选池再测。'
                     : '已把可用节点写入正式场景榜，日常订阅会优先使用这些节点。';
-                updateBestIpStatus(`<strong>${sceneLabel}</strong>：实测 ${testedCount} 个，成功 ${rawSuccessCount} 个，已按速度/延迟保留 ${successRecords.length} 个，失败 ${failedCount} 个。${nextAction}`);
+                updateBestIpStatus(`<strong>${sceneLabel}</strong>：实测 ${testedCount} 个，成功 ${rawSuccessCount} 个，已按地区/速度/延迟保留 ${successRecords.length} 个，失败 ${failedCount} 个。${formatBestIpDistribution(successRecords)}。${nextAction}`);
                 showToast('✅ OpenClash 实测结果已合并保存', 'success');
                 return { successRecords, failedRecords, testedCount, failedCount, providerName, originSuccess };
             } catch (error) {
@@ -17291,7 +17383,69 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@et.651971564.xyz:443?security=tls&t
             const speedB = Number.isFinite(Number(b.browserMbps)) ? Number(b.browserMbps) : -1;
             if (speedA !== speedB) return speedB - speedA;
             if (delayA !== delayB) return delayA - delayB;
+            const infoA = bestIpLocationCompleteness(a);
+            const infoB = bestIpLocationCompleteness(b);
+            if (infoA !== infoB) return infoB - infoA;
             return bestIpRecordKey(a).localeCompare(bestIpRecordKey(b));
+        }
+
+        function bestIpLocationCompleteness(record) {
+            return (getBestIpRecordCountry(record) ? 1 : 0)
+                + (record?.colo ? 1 : 0)
+                + (record?.continent ? 1 : 0)
+                + (record?.city ? 1 : 0);
+        }
+
+        function bestIpRegionGroup(record) {
+            const country = getBestIpRecordCountry(record);
+            if (BESTIP_CHINA_COUNTRIES.has(country)) return 'china';
+            if (country === 'US') return 'us';
+            if (country === 'JP') return 'jp';
+            if (BESTIP_EUROPE_COUNTRIES.has(country) || String(record?.continent || '').trim().toUpperCase() === 'EU') return 'europe';
+            return 'other';
+        }
+
+        function selectBalancedBestIpRecords(records, limit = BESTIP_TARGET_COUNT) {
+            const ranked = rankOpenClashRecords(records);
+            const selected = [];
+            const selectedKeys = new Set();
+            const counts = { china: 0, us: 0, jp: 0, europe: 0, other: 0 };
+            const addRecord = (record) => {
+                if (!record || selected.length >= limit) return false;
+                const key = bestIpRecordKey(record);
+                if (!key || selectedKeys.has(key)) return false;
+                const group = bestIpRegionGroup(record);
+                if (group === 'china' && counts.china >= BESTIP_CHINA_QUOTA) return false;
+                selected.push(record);
+                selectedKeys.add(key);
+                counts[group] = (counts[group] || 0) + 1;
+                return true;
+            };
+            const pickGroup = (group, count) => {
+                let added = 0;
+                for (const record of ranked) {
+                    if (added >= count || selected.length >= limit) break;
+                    if (bestIpRegionGroup(record) !== group) continue;
+                    if (addRecord(record)) added += 1;
+                }
+                return added;
+            };
+            pickGroup('china', BESTIP_CHINA_QUOTA);
+            pickGroup('us', BESTIP_US_QUOTA);
+            pickGroup('jp', BESTIP_JP_QUOTA);
+            const europeAdded = pickGroup('europe', BESTIP_EU_QUOTA);
+            if (europeAdded < BESTIP_EU_QUOTA) pickGroup('jp', BESTIP_EU_QUOTA - europeAdded);
+            for (const record of ranked) {
+                if (selected.length >= limit) break;
+                addRecord(record);
+            }
+            return selected;
+        }
+
+        function formatBestIpDistribution(records) {
+            const counts = { china: 0, us: 0, jp: 0, europe: 0, other: 0 };
+            for (const record of records) counts[bestIpRegionGroup(record)] += 1;
+            return `大中华 ${counts.china} / 美国 ${counts.us} / 日本 ${counts.jp} / 欧洲 ${counts.europe} / 其它 ${counts.other}`;
         }
 
         async function autoSelectBestIps() {
@@ -17312,7 +17466,7 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@et.651971564.xyz:443?security=tls&t
                     lastError = result.error || lastError;
                     const usable = rankOpenClashRecords(result.successRecords || []);
                     collected.push(...usable);
-                    const speedScope = rankOpenClashRecords(collected).slice(0, Math.max(targetCount, 40));
+                    const speedScope = rankOpenClashRecords(collected).slice(0, Math.max(targetCount, BESTIP_METADATA_TEST_LIMIT));
                     const measured = await measureBestIpDownloadSpeeds(speedScope, {
                         quiet: false,
                         label: `自动优选第 ${round} 批下载测速`
@@ -17322,7 +17476,7 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@et.651971564.xyz:443?security=tls&t
                         const measuredRecord = measuredByKey.get(bestIpRecordKey(collected[index]));
                         if (measuredRecord) collected[index] = measuredRecord;
                     }
-                    const ranked = rankOpenClashRecords(collected).slice(0, targetCount);
+                    const ranked = selectBalancedBestIpRecords(collected, targetCount);
                     bestipCurrentRecords = ranked;
                     const textarea = document.getElementById('customIPs');
                     if (textarea) {
@@ -17330,10 +17484,10 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@et.651971564.xyz:443?security=tls&t
                         refreshLineEditor(textarea);
                     }
                     const speedCount = ranked.filter(record => Number.isFinite(Number(record.browserMbps)) && Number(record.browserMbps) > 0).length;
-                    updateBestIpStatus(`<strong>${sceneLabel}</strong>：自动优选第 ${round} / ${maxRounds} 批，累计测试 ${totalTested} 个，找到 ${ranked.length} 个可用节点，已完成 ${speedCount} 个下载测速${providerName ? `，已同步 Provider ${providerName}` : ''}`);
+                    updateBestIpStatus(`<strong>${sceneLabel}</strong>：自动优选第 ${round} / ${maxRounds} 批，累计测试 ${totalTested} 个，找到 ${ranked.length} 个可用节点，已完成 ${speedCount} 个下载测速；${formatBestIpDistribution(ranked)}${providerName ? `，已同步 Provider ${providerName}` : ''}`);
                     if (ranked.length >= targetCount) break;
                 }
-                const finalRecords = rankOpenClashRecords(collected).slice(0, targetCount);
+                const finalRecords = selectBalancedBestIpRecords(collected, targetCount);
                 if (!finalRecords.length) {
                     updateBestIpStatus(`自动优选跑完仍没有可用节点。${lastError ? '最后错误：' + lastError : '请先确认 Provider 片段已加入当前 OpenClash 配置，且基准域名节点可用。'}`);
                     showToast('自动优选没有找到可用节点', 'warning');
@@ -17344,7 +17498,7 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@et.651971564.xyz:443?security=tls&t
                 bestipCurrentRecords = [];
                 await saveBestIpRecords(finalRecords, 'openclash-auto');
                 const pruneText = providerName ? '失败节点已从候选 Provider 中剔除' : '当前未检测到 Provider，已保存可用节点但无法从 OpenClash 当前配置中剔除失败节点';
-                updateBestIpStatus(`<strong>${sceneLabel}</strong>：自动优选完成，累计测试 ${totalTested} 个，已保存 ${finalRecords.length} 个可用节点；${pruneText}`);
+                updateBestIpStatus(`<strong>${sceneLabel}</strong>：自动优选完成，累计测试 ${totalTested} 个，已保存 ${finalRecords.length} 个可用节点；${formatBestIpDistribution(finalRecords)}；${pruneText}`);
                 showToast('✅ 自动优选已完成并保存', 'success');
             } catch (error) {
                 updateBestIpStatus(`自动优选失败：${error.message}`);
