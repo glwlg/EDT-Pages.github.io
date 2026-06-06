@@ -8581,6 +8581,14 @@
                                     value="96" onchange="saveOpenClashControllerSettings()">
                             </div>
                             <div class="form-group">
+                                <label for="bestipCandidateSource">候选来源</label>
+                                <select id="bestipCandidateSource" title="候选来源" onchange="saveOpenClashControllerSettings()">
+                                    <option value="mixed">智能扩展：地区榜 + 随机池</option>
+                                    <option value="regional">地区榜优先：日本/香港种子</option>
+                                    <option value="random">只用运营商随机池</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
                                 <label for="bestipCandidatePorts">候选端口</label>
                                 <select id="bestipCandidatePorts" title="候选端口" onchange="saveOpenClashControllerSettings()">
                                     <option value="443,2053,2083,2087,2096,8443">全部 TLS 端口</option>
@@ -8601,7 +8609,7 @@
                             <button type="button" class="btn btn-primary" data-bestip-action="test">OpenClash实测</button>
                         </div>
                         <div class="bestip-status" id="bestipStatus">等待加载场景榜</div>
-                        <div class="bestip-hint">候选订阅只用于把节点导入 OpenClash 做实测，规则默认直连；自动优选会探测地区并按大中华最多 5、美国 5、日本 5、欧洲 5 保存，欧洲不足时用日本补。</div>
+                        <div class="bestip-hint">候选订阅只用于把节点导入 OpenClash 做实测，规则默认直连；智能扩展会先补日本 NRT、香港 HKG 和公开地区榜，再用随机池补齐；自动优选保存时按大中华最多 5、美国 5、日本 5、欧洲 5 保留。</div>
                     </div>
 
                     <div id="randomIPSection" class="form-group">
@@ -14522,6 +14530,38 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@et.651971564.xyz:443?security=tls&t
             FI: '芬兰', NO: '挪威', DK: '丹麦', IE: '爱尔兰', AT: '奥地利',
             BE: '比利时', PT: '葡萄牙', CZ: '捷克', RO: '罗马尼亚'
         };
+        const BESTIP_COLO_INFO = {
+            HKG: { country: 'HK', continent: 'AS', city: 'Hong Kong' },
+            TPE: { country: 'TW', continent: 'AS', city: 'Taipei' },
+            NRT: { country: 'JP', continent: 'AS', city: 'Tokyo' },
+            KIX: { country: 'JP', continent: 'AS', city: 'Osaka' },
+            FUK: { country: 'JP', continent: 'AS', city: 'Fukuoka' },
+            SIN: { country: 'SG', continent: 'AS', city: 'Singapore' },
+            ICN: { country: 'KR', continent: 'AS', city: 'Seoul' },
+            LAX: { country: 'US', continent: 'NA', city: 'Los Angeles' },
+            SJC: { country: 'US', continent: 'NA', city: 'San Jose' },
+            PHX: { country: 'US', continent: 'NA', city: 'Phoenix' },
+            SEA: { country: 'US', continent: 'NA', city: 'Seattle' },
+            DFW: { country: 'US', continent: 'NA', city: 'Dallas' },
+            ORD: { country: 'US', continent: 'NA', city: 'Chicago' },
+            IAD: { country: 'US', continent: 'NA', city: 'Ashburn' },
+            EWR: { country: 'US', continent: 'NA', city: 'Newark' },
+            AMS: { country: 'NL', continent: 'EU', city: 'Amsterdam' },
+            FRA: { country: 'DE', continent: 'EU', city: 'Frankfurt' },
+            CDG: { country: 'FR', continent: 'EU', city: 'Paris' },
+            LHR: { country: 'GB', continent: 'EU', city: 'London' },
+            MAD: { country: 'ES', continent: 'EU', city: 'Madrid' },
+            MXP: { country: 'IT', continent: 'EU', city: 'Milan' },
+            WAW: { country: 'PL', continent: 'EU', city: 'Warsaw' },
+            ARN: { country: 'SE', continent: 'EU', city: 'Stockholm' },
+            HEL: { country: 'FI', continent: 'EU', city: 'Helsinki' },
+            CPH: { country: 'DK', continent: 'EU', city: 'Copenhagen' },
+            PRG: { country: 'CZ', continent: 'EU', city: 'Prague' },
+            VIE: { country: 'AT', continent: 'EU', city: 'Vienna' },
+            BRU: { country: 'BE', continent: 'EU', city: 'Brussels' },
+            LIS: { country: 'PT', continent: 'EU', city: 'Lisbon' },
+            ZRH: { country: 'CH', continent: 'EU', city: 'Zurich' }
+        };
         const BESTIP_CONTROLLER_STORAGE_KEY = 'glwlgBestIpController';
         const BESTIP_CANDIDATE_BATCH_STORAGE_KEY = 'glwlgBestIpCandidateBatch';
         let bestipCurrentRecords = [];
@@ -16403,10 +16443,42 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@et.651971564.xyz:443?security=tls&t
             return BESTIP_COUNTRY_NAMES[code] || code;
         }
 
+        function getBestIpColoInfo(colo) {
+            const code = String(colo || '').trim().toUpperCase();
+            return BESTIP_COLO_INFO[code] || null;
+        }
+
+        function extractBestIpColo(text) {
+            const matches = String(text || '').toUpperCase().match(/\b[A-Z]{3}\b/g) || [];
+            return matches.find(code => BESTIP_COLO_INFO[code]) || '';
+        }
+
+        function parseBestIpRemarkMetrics(remark) {
+            let text = String(remark || '').trim();
+            const metrics = {};
+            const bracket = text.match(/\[([^\]]+)]\s*$/);
+            if (bracket) {
+                text = text.slice(0, bracket.index).trim();
+                const metricText = bracket[1];
+                const clash = metricText.match(/Clash\s*(\d+(?:\.\d+)?)ms/i);
+                const browser = metricText.match(/网页\s*(\d+(?:\.\d+)?)ms/i);
+                const speed = metricText.match(/(\d+(?:\.\d+)?)\s*Mbps/i);
+                const colo = extractBestIpColo(metricText);
+                if (clash) metrics.clashDelayMs = Number(clash[1]);
+                if (browser) metrics.browserLatencyMs = Number(browser[1]);
+                if (speed) metrics.browserMbps = Number(speed[1]);
+                if (colo) metrics.colo = colo;
+            }
+            return { remark: text, ...metrics };
+        }
+
         function getBestIpRecordCountry(record, profile = getSelectedBestIpProfile()) {
             const explicit = String(record?.country || record?.countryCode || record?.cc || '').trim().toUpperCase();
             if (/^[A-Z]{2}$/.test(explicit)) return explicit;
             const flagCountry = bestIpFlagToCountry(record?.flag || getBestIpRemarkFlag(record?.remark));
+            if (flagCountry) return flagCountry;
+            const coloInfo = getBestIpColoInfo(record?.colo || extractBestIpColo(record?.remark));
+            if (coloInfo?.country) return coloInfo.country;
             return flagCountry || '';
         }
 
@@ -16476,6 +16548,11 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@et.651971564.xyz:443?security=tls&t
             return Math.max(12, Math.min(240, Math.round(value)));
         }
 
+        function getBestIpCandidateSource() {
+            const source = String(document.getElementById('bestipCandidateSource')?.value || 'mixed').trim().toLowerCase();
+            return ['mixed', 'regional', 'random'].includes(source) ? source : 'mixed';
+        }
+
         function getBestIpCandidatePorts() {
             return document.getElementById('bestipCandidatePorts')?.value || '443,2053,2083,2087,2096,8443';
         }
@@ -16488,6 +16565,10 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@et.651971564.xyz:443?security=tls&t
             const address = normalizeBestIpAddress(record?.address);
             const port = Number(record?.port) || 443;
             return address ? `${address}:${port}` : '';
+        }
+
+        function hasBestIpMetric(value) {
+            return value !== null && value !== undefined && value !== '' && Number.isFinite(Number(value));
         }
 
         function buildMihomoTestLink(profile = getSelectedBestIpProfile()) {
@@ -16558,6 +16639,7 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@et.651971564.xyz:443?security=tls&t
             document.getElementById('openclashSecret').value = settings.secret || '';
             document.getElementById('openclashTestUrl').value = settings.testUrl || 'http://www.gstatic.com/generate_204';
             document.getElementById('bestipCandidateCount').value = settings.candidateCount || '96';
+            document.getElementById('bestipCandidateSource').value = settings.candidateSource || 'mixed';
             document.getElementById('bestipCandidatePorts').value = settings.candidatePorts || '443,2053,2083,2087,2096,8443';
             const savedProfile = localStorage.getItem('glwlgBestIpProfile');
             if (savedProfile && BESTIP_PROFILES[savedProfile]) {
@@ -16571,6 +16653,7 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@et.651971564.xyz:443?security=tls&t
                 secret: document.getElementById('openclashSecret').value,
                 testUrl: document.getElementById('openclashTestUrl').value.trim(),
                 candidateCount: String(getBestIpCandidateCount()),
+                candidateSource: getBestIpCandidateSource(),
                 candidatePorts: getBestIpCandidatePorts()
             };
             localStorage.setItem(BESTIP_CONTROLLER_STORAGE_KEY, JSON.stringify(settings));
@@ -16668,9 +16751,27 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@et.651971564.xyz:443?security=tls&t
                 }
             }
             if (!address || !Number.isInteger(port) || port < 1 || port > 65535) return null;
-            const flag = getBestIpRemarkFlag(remark);
-            const country = bestIpFlagToCountry(flag);
-            return { address: normalizeBestIpAddress(address), port, remark, country, flag, source: 'manual' };
+            const metrics = parseBestIpRemarkMetrics(remark);
+            const cleanRemark = metrics.remark || remark;
+            const colo = String(metrics.colo || extractBestIpColo(cleanRemark)).trim().toUpperCase();
+            const coloInfo = getBestIpColoInfo(colo) || {};
+            const flag = getBestIpRemarkFlag(cleanRemark);
+            const country = bestIpFlagToCountry(flag) || coloInfo.country || '';
+            const parsedRecord = {
+                address: normalizeBestIpAddress(address),
+                port,
+                remark: cleanRemark,
+                country,
+                flag: flag || bestIpCountryToFlag(country),
+                colo,
+                continent: coloInfo.continent || '',
+                city: coloInfo.city || '',
+                source: 'manual'
+            };
+            if (Number.isFinite(metrics.browserLatencyMs)) parsedRecord.browserLatencyMs = metrics.browserLatencyMs;
+            if (Number.isFinite(metrics.browserMbps)) parsedRecord.browserMbps = metrics.browserMbps;
+            if (Number.isFinite(metrics.clashDelayMs)) parsedRecord.clashDelayMs = metrics.clashDelayMs;
+            return parsedRecord;
         }
 
         function bestIpRecordToLine(record) {
@@ -16678,9 +16779,9 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@et.651971564.xyz:443?security=tls&t
             const port = Number(record.port) || 443;
             const displayAddress = address.includes(':') ? `[${address}]:${port}` : `${address}:${port}`;
             const metrics = [];
-            if (Number.isFinite(Number(record.clashDelayMs))) metrics.push(`Clash ${Math.round(Number(record.clashDelayMs))}ms`);
-            if (Number.isFinite(Number(record.browserLatencyMs))) metrics.push(`网页 ${Math.round(Number(record.browserLatencyMs))}ms`);
-            if (Number.isFinite(Number(record.browserMbps))) metrics.push(`${Number(record.browserMbps).toFixed(2)}Mbps`);
+            if (hasBestIpMetric(record.clashDelayMs)) metrics.push(`Clash ${Math.round(Number(record.clashDelayMs))}ms`);
+            if (hasBestIpMetric(record.browserLatencyMs)) metrics.push(`网页 ${Math.round(Number(record.browserLatencyMs))}ms`);
+            if (hasBestIpMetric(record.browserMbps)) metrics.push(`${Number(record.browserMbps).toFixed(2)}Mbps`);
             if (record.colo) metrics.push(record.colo);
             const remark = buildBestIpRecordRemark(record);
             return `${displayAddress}#${remark}${metrics.length ? '[' + metrics.join(' ') + ']' : ''}`;
@@ -16709,14 +16810,16 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@et.651971564.xyz:443?security=tls&t
             const profile = getSelectedBestIpProfile();
             const batch = setBestIpCandidateBatch(String(Date.now()));
             const count = getBestIpCandidateCount();
+            const source = getBestIpCandidateSource();
             const ports = getBestIpCandidatePorts();
             const textarea = document.getElementById('customIPs');
-            updateBestIpStatus(`正在生成 ${count} 个候选节点...`);
+            updateBestIpStatus(`正在生成 ${count} 个候选节点，来源 ${source}...`);
             try {
                 const params = new URLSearchParams({
                     profile,
                     refresh: '1',
                     count: String(count),
+                    source,
                     ports,
                     batch,
                     _t: String(Date.now())
@@ -16737,7 +16840,7 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@et.651971564.xyz:443?security=tls&t
                     refreshLineEditor(textarea);
                 }
                 const originCount = bestipCurrentRecords.filter(record => record.source === 'origin').length;
-                updateBestIpStatus(`<strong>${data.label || BESTIP_PROFILES[profile].label}</strong>：已生成 ${bestipCurrentRecords.length} 个候选，含 ${originCount} 个基准域名节点；复制候选订阅并在 OpenClash 更新后再实测`);
+                updateBestIpStatus(`<strong>${data.label || BESTIP_PROFILES[profile].label}</strong>：已生成 ${bestipCurrentRecords.length} 个候选，含 ${originCount} 个基准域名节点；${formatBestIpDistribution(bestipCurrentRecords)}；复制候选订阅并在 OpenClash 更新后再实测`);
                 showToast('✅ 候选池已生成，请复制候选订阅导入 OpenClash', 'success');
             } catch (error) {
                 updateBestIpStatus(`生成候选失败：${error.message}`);
@@ -16761,12 +16864,14 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@et.651971564.xyz:443?security=tls&t
             const profile = getSelectedBestIpProfile();
             const batch = setBestIpCandidateBatch(String(Date.now()));
             const count = getBestIpCandidateCount();
+            const source = getBestIpCandidateSource();
             const ports = getBestIpCandidatePorts();
-            updateBestIpStatus(`自动优选 ${round} / ${totalRounds}：正在生成 ${count} 个候选...`);
+            updateBestIpStatus(`自动优选 ${round} / ${totalRounds}：正在生成 ${count} 个候选，来源 ${source}...`);
             const params = new URLSearchParams({
                 profile,
                 refresh: '1',
                 count: String(count),
+                source,
                 ports,
                 batch,
                 _t: String(Date.now())
@@ -17369,8 +17474,8 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@et.651971564.xyz:443?security=tls&t
         }
 
         function compareBestIpRank(a, b) {
-            const delayA = Number.isFinite(Number(a.clashDelayMs)) ? Number(a.clashDelayMs) : 999999;
-            const delayB = Number.isFinite(Number(b.clashDelayMs)) ? Number(b.clashDelayMs) : 999999;
+            const delayA = hasBestIpMetric(a.clashDelayMs) ? Number(a.clashDelayMs) : 999999;
+            const delayB = hasBestIpMetric(b.clashDelayMs) ? Number(b.clashDelayMs) : 999999;
             const hasDelayA = delayA < 999999;
             const hasDelayB = delayB < 999999;
             if (hasDelayA !== hasDelayB) return hasDelayA ? -1 : 1;
@@ -17379,8 +17484,8 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@et.651971564.xyz:443?security=tls&t
                 const bucketB = Math.floor(delayB / BESTIP_DELAY_BUCKET_MS);
                 if (bucketA !== bucketB) return bucketA - bucketB;
             }
-            const speedA = Number.isFinite(Number(a.browserMbps)) ? Number(a.browserMbps) : -1;
-            const speedB = Number.isFinite(Number(b.browserMbps)) ? Number(b.browserMbps) : -1;
+            const speedA = hasBestIpMetric(a.browserMbps) ? Number(a.browserMbps) : -1;
+            const speedB = hasBestIpMetric(b.browserMbps) ? Number(b.browserMbps) : -1;
             if (speedA !== speedB) return speedB - speedA;
             if (delayA !== delayB) return delayA - delayB;
             const infoA = bestIpLocationCompleteness(a);
