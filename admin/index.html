@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <meta name="robots" content="noindex, nofollow">
-    <title>管理后台</title>
+    <title>GLWLG 二开版 - 管理后台</title>
     <script data-cfasync="false" src="https://cdn.jsdelivr.net/npm/@keeex/qrcodejs-kx@1.0.2/qrcode.min.js"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -2498,6 +2498,12 @@
             color: var(--text-primary)
         }
 
+        html.dark-mode .edition-badge {
+            background: rgba(255, 255, 255, 0.12);
+            color: #e5e7eb;
+            box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12)
+        }
+
         html.dark-mode .form-group input:not([type="checkbox"]),
         html.dark-mode .form-group select,
         html.dark-mode .form-group textarea {
@@ -3112,6 +3118,22 @@
             margin: 0
         }
 
+        .edition-badge {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            margin-top: 8px;
+            padding: 6px 12px;
+            border-radius: 999px;
+            background: rgba(15, 23, 42, 0.08);
+            color: #334155;
+            font-size: 12px;
+            font-weight: 700;
+            line-height: 1;
+            letter-spacing: 0;
+            box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.08)
+        }
+
         .header-buttons {
             display: flex;
             gap: 12px
@@ -3471,6 +3493,11 @@
                 display: grid;
                 grid-template-columns: 1fr 1fr;
                 gap: 10px
+            }
+
+            .edition-badge {
+                font-size: 11px;
+                padding: 5px 10px
             }
 
             .btn-mode-toggle {
@@ -8201,6 +8228,7 @@
             <div class="header">
                 <div class="header-title">
                     <h1 id="pageTitle">加载中...</h1>
+                    <span class="edition-badge">GLWLG 二开版</span>
                 </div>
                 <div class="header-buttons">
                     <button type="button" class="btn btn-mode-toggle" id="modeToggleBtn" onclick="toggleUserMode()">🐣
@@ -15896,7 +15924,7 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@edt-pages.github.io:443?security=tl
                 renderUI();
                 loadVersionByUUID(currentConfig.UUID);
                 // 设置网页标题
-                document.title = `${currentConfig.优选订阅生成?.SUBNAME || 'edgetunnel'} 设置页面 - 管理后台`;
+                document.title = `GLWLG 二开版 - ${currentConfig.优选订阅生成?.SUBNAME || 'edgetunnel'} 设置页面 - 管理后台`;
             } catch (error) {
                 updateVersionBadge('');
                 showToast('加载配置失败: ' + error.message, 'error');
@@ -17571,7 +17599,7 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@edt-pages.github.io:443?security=tl
 
             await saveConfigToServer('config');
             // 更新网页标题
-            document.title = `${currentConfig.优选订阅生成?.SUBNAME || 'edgetunnel'}设置页面 - 管理后台`;
+            document.title = `GLWLG 二开版 - ${currentConfig.优选订阅生成?.SUBNAME || 'edgetunnel'} 设置页面 - 管理后台`;
         }
 
         async function saveEch() {
