@@ -8575,9 +8575,24 @@
                                     placeholder="http://www.gstatic.com/generate_204"
                                     onchange="saveOpenClashControllerSettings()">
                             </div>
+                            <div class="form-group">
+                                <label for="bestipCandidateCount">候选数量</label>
+                                <input type="number" id="bestipCandidateCount" title="候选数量" min="12" max="240"
+                                    value="96" onchange="saveOpenClashControllerSettings()">
+                            </div>
+                            <div class="form-group">
+                                <label for="bestipCandidatePorts">候选端口</label>
+                                <select id="bestipCandidatePorts" title="候选端口" onchange="saveOpenClashControllerSettings()">
+                                    <option value="443,2053,2083,2087,2096,8443">全部 TLS 端口</option>
+                                    <option value="443,8443,2053">常用端口 443/8443/2053</option>
+                                    <option value="443">只测 443</option>
+                                    <option value="2053,2083,2087,2096,8443">非 443 TLS 端口</option>
+                                </select>
+                            </div>
                         </div>
                         <div class="bestip-actions">
                             <button type="button" class="btn btn-secondary" onclick="loadProfileBestIPs()">加载场景榜</button>
+                            <button type="button" class="btn btn-secondary" onclick="generateBestIpCandidates()">生成下一批候选</button>
                             <button type="button" class="btn btn-secondary" onclick="copyMihomoTestLink()">复制候选订阅</button>
                             <button type="button" class="btn btn-secondary" onclick="saveProfileBestIPsFromTextarea()">保存场景榜</button>
                             <button type="button" class="btn btn-primary" onclick="testOpenClashProfile()">OpenClash实测</button>
@@ -14485,6 +14500,7 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@et.651971564.xyz:443?security=tls&t
             'cf-fallback': { label: '兜底', shortLabel: '兜底', asOrg: 'cf' }
         };
         const BESTIP_CONTROLLER_STORAGE_KEY = 'glwlgBestIpController';
+        const BESTIP_CANDIDATE_BATCH_STORAGE_KEY = 'glwlgBestIpCandidateBatch';
         let bestipCurrentRecords = [];
 
         function parseForcedLowPerformanceMode() {
@@ -16329,10 +16345,45 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@et.651971564.xyz:443?security=tls&t
             if (el) el.innerHTML = html;
         }
 
+        function getBestIpCandidateBatch() {
+            let batch = localStorage.getItem(BESTIP_CANDIDATE_BATCH_STORAGE_KEY);
+            if (!batch) {
+                batch = String(Date.now());
+                localStorage.setItem(BESTIP_CANDIDATE_BATCH_STORAGE_KEY, batch);
+            }
+            return batch;
+        }
+
+        function setBestIpCandidateBatch(batch = String(Date.now())) {
+            localStorage.setItem(BESTIP_CANDIDATE_BATCH_STORAGE_KEY, String(batch));
+            updateMihomoTestLink();
+            return String(batch);
+        }
+
+        function getBestIpCandidateBatchSuffix() {
+            return getBestIpCandidateBatch().replace(/[^\w.-]/g, '').slice(-8);
+        }
+
+        function getBestIpCandidateCount() {
+            const value = Number(document.getElementById('bestipCandidateCount')?.value || 96);
+            if (!Number.isFinite(value)) return 96;
+            return Math.max(12, Math.min(240, Math.round(value)));
+        }
+
+        function getBestIpCandidatePorts() {
+            return document.getElementById('bestipCandidatePorts')?.value || '443,2053,2083,2087,2096,8443';
+        }
+
         function buildMihomoTestLink(profile = getSelectedBestIpProfile()) {
             const token = currentConfig?.优选订阅生成?.TOKEN;
             if (!token) return '';
-            const params = new URLSearchParams({ token, target: 'glwlg-mihomo', profile });
+            const params = new URLSearchParams({
+                token,
+                target: 'glwlg-mihomo',
+                profile,
+                candidate: '1',
+                batch: getBestIpCandidateBatch()
+            });
             return `${window.location.origin}/sub?${params.toString()}`;
         }
 
@@ -16351,6 +16402,8 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@et.651971564.xyz:443?security=tls&t
             document.getElementById('openclashController').value = settings.controller || 'http://192.168.1.1:9090';
             document.getElementById('openclashSecret').value = settings.secret || '';
             document.getElementById('openclashTestUrl').value = settings.testUrl || 'http://www.gstatic.com/generate_204';
+            document.getElementById('bestipCandidateCount').value = settings.candidateCount || '96';
+            document.getElementById('bestipCandidatePorts').value = settings.candidatePorts || '443,2053,2083,2087,2096,8443';
             const savedProfile = localStorage.getItem('glwlgBestIpProfile');
             if (savedProfile && BESTIP_PROFILES[savedProfile]) {
                 document.getElementById('bestipProfile').value = savedProfile;
@@ -16361,7 +16414,9 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@et.651971564.xyz:443?security=tls&t
             const settings = {
                 controller: document.getElementById('openclashController').value.trim(),
                 secret: document.getElementById('openclashSecret').value,
-                testUrl: document.getElementById('openclashTestUrl').value.trim()
+                testUrl: document.getElementById('openclashTestUrl').value.trim(),
+                candidateCount: String(getBestIpCandidateCount()),
+                candidatePorts: getBestIpCandidatePorts()
             };
             localStorage.setItem(BESTIP_CONTROLLER_STORAGE_KEY, JSON.stringify(settings));
         }
@@ -16409,6 +16464,7 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@et.651971564.xyz:443?security=tls&t
 
         function onBestIpProfileChange() {
             localStorage.setItem('glwlgBestIpProfile', getSelectedBestIpProfile());
+            setBestIpCandidateBatch(String(Date.now()));
             updateMihomoTestLink();
             bestipCurrentRecords = [];
             if (document.getElementById('ipMode')?.value === 'custom') loadCustomIPs();
@@ -16469,6 +16525,46 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@et.651971564.xyz:443?security=tls&t
             });
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
             return response.json();
+        }
+
+        async function generateBestIpCandidates() {
+            const profile = getSelectedBestIpProfile();
+            const batch = setBestIpCandidateBatch(String(Date.now()));
+            const count = getBestIpCandidateCount();
+            const ports = getBestIpCandidatePorts();
+            const textarea = document.getElementById('customIPs');
+            updateBestIpStatus(`正在生成 ${count} 个候选节点...`);
+            try {
+                const params = new URLSearchParams({
+                    profile,
+                    refresh: '1',
+                    count: String(count),
+                    ports,
+                    batch,
+                    _t: String(Date.now())
+                });
+                const response = await fetch(`/admin/bestip-candidates.json?${params.toString()}`, {
+                    headers: {
+                        'Cache-Control': 'no-cache, no-store, must-revalidate',
+                        'Pragma': 'no-cache',
+                        'Expires': '0'
+                    }
+                });
+                const data = await response.json().catch(() => ({}));
+                if (!response.ok || data.error) throw new Error(data.error || `HTTP ${response.status}`);
+                bestipCurrentRecords = Array.isArray(data.records) ? data.records : [];
+                const lines = Array.isArray(data.lines) ? data.lines : bestipCurrentRecords.map(bestIpRecordToLine);
+                if (textarea) {
+                    textarea.value = lines.join('\n');
+                    refreshLineEditor(textarea);
+                }
+                const originCount = bestipCurrentRecords.filter(record => record.source === 'origin').length;
+                updateBestIpStatus(`<strong>${data.label || BESTIP_PROFILES[profile].label}</strong>：已生成 ${bestipCurrentRecords.length} 个候选，含 ${originCount} 个基准域名节点；复制候选订阅并在 OpenClash 更新后再实测`);
+                showToast('✅ 候选池已生成，请复制候选订阅导入 OpenClash', 'success');
+            } catch (error) {
+                updateBestIpStatus(`生成候选失败：${error.message}`);
+                showToast('生成候选池失败', 'error');
+            }
         }
 
         async function loadProfileBestIPs() {
@@ -16544,8 +16640,18 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@et.651971564.xyz:443?security=tls&t
             const headers = { ...(options.headers || {}) };
             if (secret) headers.Authorization = `Bearer ${secret}`;
             const response = await fetch(controller + path, { ...options, headers });
-            if (!response.ok) throw new Error(`OpenClash API HTTP ${response.status}`);
-            return response.json();
+            const text = await response.text();
+            let data = {};
+            try {
+                data = text ? JSON.parse(text) : {};
+            } catch (_) {
+                data = { message: text };
+            }
+            if (!response.ok) {
+                const message = data.message || data.error || text || response.statusText;
+                throw new Error(`OpenClash API HTTP ${response.status}: ${message}`);
+            }
+            return data;
         }
 
         function getOpenClashProxyIndex(name, fallbackIndex = 0) {
@@ -16556,10 +16662,13 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@et.651971564.xyz:443?security=tls&t
 
         function findOpenClashProfileProxies(proxiesData, profile) {
             const scene = BESTIP_PROFILES[profile];
+            const batchSuffix = getBestIpCandidateBatchSuffix();
             const proxies = proxiesData?.proxies || {};
             const entries = Object.entries(proxies)
                 .filter(([name, proxy]) => name.includes('GLWLG') && !Array.isArray(proxy?.all));
-            const sceneMatched = entries
+            const batchMatched = batchSuffix ? entries
+                .filter(([name]) => name.includes(batchSuffix) && (name.includes(scene.shortLabel) || name.includes(scene.label))) : [];
+            const sceneMatched = batchMatched.length ? batchMatched : entries
                 .filter(([name]) => name.includes(scene.shortLabel) || name.includes(scene.label));
             const matchedEntries = sceneMatched.length ? sceneMatched : entries
                 .filter(([name, proxy]) => {
@@ -16624,8 +16733,27 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@et.651971564.xyz:443?security=tls&t
                         updated[item.index].error = error.message;
                     }
                 }
+                const successRecords = updated.filter(record => Number.isFinite(Number(record.clashDelayMs)) && !record.failed && Number(record.clashDelayMs) <= 3000);
+                const originRecords = updated.filter(record => record.source === 'origin');
+                const originSuccess = originRecords.some(record => Number.isFinite(Number(record.clashDelayMs)) && !record.failed && Number(record.clashDelayMs) <= 3000);
+                const testedCount = testItems.length;
+                const failedCount = testedCount - successRecords.length;
+                if (!successRecords.length) {
+                    const firstError = updated.find(record => record.error)?.error || '无可用 delay';
+                    const message = originRecords.length
+                        ? `基准域名也不可用，先不要继续刷 IP。优先检查普通订阅在 OpenClash 是否能连、UUID/路径/传输协议是否一致、Worker 是否已部署。首个错误：${firstError}`
+                        : `本批候选全部失败。请生成下一批候选，或先加入基准域名节点排除配置问题。首个错误：${firstError}`;
+                    updateBestIpStatus(message);
+                    showToast('本批没有可保存的可用节点', 'warning');
+                    return;
+                }
                 bestipCurrentRecords = [];
                 await saveBestIpRecords(updated, 'openclash');
+                const sceneLabel = BESTIP_PROFILES[profile].label;
+                const nextAction = originSuccess && successRecords.length === 1
+                    ? '当前只有基准域名可用，说明 ET 配置本身可连但候选 IP 不行；继续生成下一批候选池再测。'
+                    : '已把可用节点写入正式场景榜，日常订阅会优先使用这些节点。';
+                updateBestIpStatus(`<strong>${sceneLabel}</strong>：实测 ${testedCount} 个，成功 ${successRecords.length} 个，失败 ${failedCount} 个。${nextAction}`);
                 showToast('✅ OpenClash 实测结果已合并保存', 'success');
             } catch (error) {
                 const message = /Failed to fetch|NetworkError|Load failed/i.test(error.message)
